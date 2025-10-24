@@ -3,7 +3,11 @@ local M = {}
 
 ---@class abcql.Config
 local defaults = {
-  data_sources = {},
+  data_sources = {
+    -- Examples:
+    -- shop_dev = "mysql://user:password@localhost:3306/shop_db",
+    -- shop_prod = "mysql://user:password@prodserv:3306/shop_db",
+  },
 }
 
 local config = vim.deepcopy(defaults) --[[@as abcql.Config]]
@@ -13,6 +17,9 @@ function M.setup(opts)
   vim.notify("Setting up abcql config", vim.log.levels.INFO)
 
   config = vim.tbl_deep_extend("force", {}, vim.deepcopy(defaults), opts or {})
+
+  -- Initialize connection registry with data sources
+  require("abcql.db").setup()
 
   vim.api.nvim_create_user_command("Abcql", function()
     vim.notify(vim.inspect(config), vim.log.levels.INFO, { title = "abcql Config" })
