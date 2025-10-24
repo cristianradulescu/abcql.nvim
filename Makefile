@@ -2,7 +2,7 @@
 
 lint:
 	@echo "Running luacheck..."
-	@luacheck lua/
+	@luacheck lua/ tests/
 
 format:
 	@echo "Running stylua..."
@@ -17,4 +17,4 @@ check: lint format
 
 test:
 	@echo "Running tests..."
-	@nvim --headless --noplugin -u tests/minit.lua -c "PlenaryBustedDirectory tests/ { minimal_init = 'tests/minimal_init.lua' }"
+	@nvim --headless --noplugin -u tests/minimal_init.lua -c "PlenaryBustedDirectory tests/ { minimal_init = 'tests/minimal_init.lua' }"

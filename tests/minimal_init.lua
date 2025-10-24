@@ -9,4 +9,10 @@ vim.opt.rtp:append(".")
 vim.opt.rtp:append(plenary_dir)
 
 vim.cmd("runtime! plugin/plenary.vim")
-vim.cmd("runtime! plugin/abcql.lua")
+
+vim.log.levels = {
+  ERROR = 1,
+  WARN = 2,
+  INFO = 3,
+  DEBUG = 4,
+}
