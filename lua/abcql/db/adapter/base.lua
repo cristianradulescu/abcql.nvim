@@ -4,8 +4,17 @@
 ---@field get_args fun(self: abcql.db.adapter.Adapter, query: string, opts: table|nil): table
 ---@field parse_output fun(self: abcql.db.adapter.Adapter, raw: string): table
 ---@field get_databases fun(self: abcql.db.adapter.Adapter, callback: fun(databases: table, err: string|nil))
----@field get_tables fun(self: abcql.db.adapter.Adapter, database: string, callback: fun(tables: table, err: string|nil))
----@field get_columns fun(self: abcql.db.adapter.Adapter, database: string, table_name: string, callback: fun(columns: table, err: string|nil))
+---@field get_tables fun(
+---  self: abcql.db.adapter.Adapter,
+---  database: string,
+---  callback: fun(tables: table, err: string|nil)
+---)
+---@field get_columns fun(
+---  self: abcql.db.adapter.Adapter,
+---  database: string,
+---  table_name: string,
+---  callback: fun(columns: table, err: string|nil)
+---)
 ---@field escape_identifier fun(self: abcql.db.adapter.Adapter, name: string): string
 ---@field escape_value fun(self: abcql.db.adapter.Adapter, value: string): string
 local Adapter = {}
@@ -32,6 +41,14 @@ end
 --- @return table Array of command-line arguments
 function Adapter:get_args(query, opts)
   error("get_args must be implemented by adapter")
+end
+
+--- Execute a query with possible asynchronous callback
+--- @param query string The SQL query to execute
+--- @param opts table|nil Optional parameters (adapter-specific)
+--- @param callback function Called with (results, error) where results is structured data
+function Adapter:execute_query(query, opts, callback)
+  error("execute_query must be implemented by adapter")
 end
 
 --- Parse raw CLI output into structured data

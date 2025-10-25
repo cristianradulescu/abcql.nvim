@@ -1,4 +1,5 @@
 local Adapter = require("abcql.db.adapter.base")
+local Query = require("abcql.db.query")
 
 ---@class abcql.db.adapter.MySQLAdapter: abcql.db.adapter.Adapter
 local MySQLAdapter = {}
@@ -51,6 +52,18 @@ function MySQLAdapter:get_args(query, opts)
   return args
 end
 
+--- Execute a query with possible asynchronous callback
+--- @param query string The SQL query to execute
+--- @param opts table|nil Optional parameters (adapter-specific)
+--- @param callback function Called with (results, error) where results is structured data
+function MySQLAdapter:execute_query(query, opts, callback)
+  if callback == nil then
+    return Query.execute_sync(self, query, opts)
+  end
+
+  return Query.execute_async(self, query, callback, opts)
+end
+
 --- Parse MySQL tab-separated output into rows
 --- @param raw string Raw tab-separated output from mysql CLI
 --- @return table Array of rows, where each row is an array of field values
@@ -70,8 +83,21 @@ end
 --- @param callback function Called with (databases, error) where databases is array of database names
 function MySQLAdapter:get_databases(callback)
   local query = "SHOW DATABASES"
+  Query.execute_async(self, query, function(result, err)
+    if err then
+      callback(nil, err)
+      return
+    end
 
-  -- @TODO: Implement query execution
+    local databases = {}
+    for _, row in ipairs(result.rows) do
+      if row[1] then
+        table.insert(databases, row[1])
+      end
+    end
+
+    callback(databases, nil)
+  end, { skip_column_names = true })
 end
 
 --- Fetch list of tables in a database asynchronously
@@ -83,7 +109,21 @@ function MySQLAdapter:get_tables(database, callback)
     self:escape_value(database)
   )
 
-  -- @TODO: Implement query execution
+  Query.execute_async(self, query, function(result, err)
+    if err then
+      callback(nil, err)
+      return
+    end
+
+    local tables = {}
+    for _, row in ipairs(result.rows) do
+      if row[1] then
+        table.insert(tables, row[1])
+      end
+    end
+
+    callback(tables, nil)
+  end, { skip_column_names = true })
 end
 
 --- Fetch list of columns in a table asynchronously
@@ -97,7 +137,21 @@ function MySQLAdapter:get_columns(database, table_name, callback)
     self:escape_value(table_name)
   )
 
-  -- @TODO: Implement query execution
+  Query.execute_async(self, query, function(result, err)
+    if err then
+      callback(nil, err)
+      return
+    end
+
+    local columns = {}
+    for _, row in ipairs(result.rows) do
+      if row[1] and row[2] then
+        table.insert(columns, { name = row[1], type = row[2] })
+      end
+    end
+
+    callback(columns, nil)
+  end, { skip_column_names = true })
 end
 
 --- Escape a MySQL identifier using backticks
