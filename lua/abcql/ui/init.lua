@@ -1,52 +1,75 @@
 ---@class abcql.UI
 local UI = {}
 
--- State management for the ABCQL UI
+---@alias abcql.UI.LayoutOpts { editor_buf: number? }
+
+-- State management for the abcql UI
 -- This table tracks all buffers, windows, and visibility state for the UI components
 local state = {
-  -- Buffer IDs for the three main components
+  -- Buffer IDs for the main components
   editor_buf = nil,
   results_buf = nil,
   data_source_tree_buf = nil,
 
-  -- Window IDs for the three main components
+  -- Window IDs for the main components
   editor_win = nil,
   results_win = nil,
   data_source_tree_win = nil,
 
   -- Visibility state for togglable components
   -- editor is always visible when UI is open
-  results_visible = true,
-  tree_visible = true,
-
-  -- Autocmd group ID for managing layout-related autocmds
-  layout_augroup = nil,
+  results_visible = false,
+  data_source_tree_visible = false,
 }
 
---- Open the ABCQL UI
+--- Open the abcql UI
 --- Creates a three-panel layout: query editor (top), results (bottom), data source tree (right)
 --- The layout uses splits with winfixbuf to prevent buffer mixing
---- @param opts? table Optional parameters
+--- @param opts? abcql.UI.LayoutOpts Optional parameters
 function UI.open(opts)
   opts = opts or {}
 
+  -- If no editor buffer is provided, check if the current buffer is a SQL file to use instead, or create one
+  if nil == opts.editor_buf then
+    local current_buf = vim.api.nvim_get_current_buf()
+    local is_sql_file = vim.bo[current_buf].filetype == "sql" and vim.bo[current_buf].buftype == ""
+    if not is_sql_file and opts.editor_buf == nil then
+      vim.ui.select({ "Yes", "No" }, {
+        prompt = "abcql UI requires a SQL file buffer. Create one?",
+      }, function(choice)
+        if choice == "Yes" then
+          local scratch_buf = vim.api.nvim_create_buf(false, true)
+          vim.api.nvim_buf_set_name(scratch_buf, "[abcql] SQL console")
+          vim.api.nvim_buf_set_option(scratch_buf, "filetype", "sql")
+          vim.api.nvim_buf_set_option(scratch_buf, "buftype", "")
+          vim.api.nvim_buf_set_option(scratch_buf, "buflisted", false)
+          vim.api.nvim_buf_set_option(scratch_buf, "bufhidden", "hide")
+          vim.api.nvim_buf_set_option(scratch_buf, "swapfile", false)
+          vim.api.nvim_set_current_buf(scratch_buf)
+          UI.open({ editor_buf = scratch_buf })
+        end
+      end)
+
+      return
+    else
+      UI.open({ editor_buf = current_buf })
+
+      return
+    end
+  end
+
   -- Check if UI is already open by checking if any buffer exists and is valid
-  if state.editor_buf ~= nil and vim.api.nvim_buf_is_valid(state.editor_buf) then
-    vim.notify("abcql UI is already open", vim.log.levels.INFO)
-    return
+  vim.print(vim.inspect(state.editor_buf))
+  vim.print(vim.inspect(opts.editor_buf))
+  if state.editor_buf == nil and opts.editor_buf ~= nil and vim.api.nvim_buf_is_valid(opts.editor_buf) then
+    vim.notify("abcql editor buf found", vim.log.levels.INFO)
+    state.editor_buf = opts.editor_buf
   end
 
   vim.notify("Opening abcql UI", vim.log.levels.INFO)
 
   -- Create buffers with nofile type and nobuflisted to prevent them from
   -- appearing in buffer lists and being mixed with regular file buffers
-  state.editor_buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(state.editor_buf, "[abcql] Query Editor")
-  vim.api.nvim_buf_set_option(state.editor_buf, "buflisted", false)
-  vim.api.nvim_buf_set_option(state.editor_buf, "buftype", "nofile")
-  vim.api.nvim_buf_set_option(state.editor_buf, "bufhidden", "hide")
-  vim.api.nvim_buf_set_option(state.editor_buf, "swapfile", false)
-
   state.results_buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(state.results_buf, "[abcql] Query Results")
   vim.api.nvim_buf_set_option(state.results_buf, "buflisted", false)
@@ -102,61 +125,14 @@ function UI.open(opts)
   vim.api.nvim_set_option_value("winfixbuf", true, { win = state.data_source_tree_win })
   vim.api.nvim_set_option_value("winfixwidth", true, { win = state.data_source_tree_win })
 
-  -- Set up autocmds to handle window closure and maintain layout
-  state.layout_augroup = vim.api.nvim_create_augroup("AbcqlLayout", { clear = true })
-
-  -- When any of our windows are closed, close the entire UI
-  -- This prevents partial/broken layout states
-  vim.api.nvim_create_autocmd("WinClosed", {
-    group = state.layout_augroup,
-    callback = function(ev)
-      -- ev.match contains the window ID that was closed
-      local closed_win = tonumber(ev.match)
-
-      -- Check if the closed window was one of our UI windows
-      if
-        closed_win == state.editor_win
-        or closed_win == state.results_win
-        or closed_win == state.data_source_tree_win
-      then
-        -- If editor window was closed, close entire UI
-        -- For results/tree, just update visibility state
-        if closed_win == state.editor_win then
-          vim.schedule(function()
-            UI.close()
-          end)
-        elseif closed_win == state.results_win then
-          state.results_visible = false
-          state.results_win = nil
-        elseif closed_win == state.data_source_tree_win then
-          state.tree_visible = false
-          state.data_source_tree_win = nil
-        end
-      end
-    end,
-  })
-
   -- Initialize visibility state
   state.results_visible = true
-  state.tree_visible = true
+  state.data_source_tree_visible = true
 end
 
 --- Close the ABCQL UI
 --- Closes all windows and deletes all buffers associated with the UI
 function UI.close()
-  -- Close all windows if they exist and are valid
-  if state.editor_win and vim.api.nvim_win_is_valid(state.editor_win) then
-    vim.api.nvim_win_close(state.editor_win, false)
-  end
-
-  if state.results_win and vim.api.nvim_win_is_valid(state.results_win) then
-    vim.api.nvim_win_close(state.results_win, false)
-  end
-
-  if state.data_source_tree_win and vim.api.nvim_win_is_valid(state.data_source_tree_win) then
-    vim.api.nvim_win_close(state.data_source_tree_win, false)
-  end
-
   -- Delete all buffers if they exist and are valid
   if state.editor_buf and vim.api.nvim_buf_is_valid(state.editor_buf) then
     vim.api.nvim_buf_delete(state.editor_buf, { force = true })
@@ -170,11 +146,6 @@ function UI.close()
     vim.api.nvim_buf_delete(state.data_source_tree_buf, { force = true })
   end
 
-  -- Clear the autocmd group
-  if state.layout_augroup then
-    vim.api.nvim_del_augroup_by_id(state.layout_augroup)
-  end
-
   -- Reset state
   state.editor_buf = nil
   state.results_buf = nil
@@ -182,9 +153,8 @@ function UI.close()
   state.editor_win = nil
   state.results_win = nil
   state.data_source_tree_win = nil
-  state.results_visible = true
-  state.tree_visible = true
-  state.layout_augroup = nil
+  state.results_visible = false
+  state.data_source_tree_visible = false
 
   vim.notify("Closed abcql UI", vim.log.levels.INFO)
 end
@@ -243,12 +213,12 @@ function UI.toggle_tree()
     return
   end
 
-  if state.tree_visible then
+  if state.data_source_tree_visible then
     -- Hide the tree panel
     if state.data_source_tree_win and vim.api.nvim_win_is_valid(state.data_source_tree_win) then
       vim.api.nvim_win_close(state.data_source_tree_win, false)
       state.data_source_tree_win = nil
-      state.tree_visible = false
+      state.data_source_tree_visible = false
     end
   else
     -- Show the tree panel
@@ -267,7 +237,7 @@ function UI.toggle_tree()
       vim.api.nvim_set_option_value("winfixbuf", true, { win = state.data_source_tree_win })
       vim.api.nvim_set_option_value("winfixwidth", true, { win = state.data_source_tree_win })
 
-      state.tree_visible = true
+      state.data_source_tree_visible = true
 
       -- Restore focus to the window that was current before toggling
       if current_win and vim.api.nvim_win_is_valid(current_win) then

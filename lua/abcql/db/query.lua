@@ -70,10 +70,12 @@ function Query.execute_sync(adapter, query, opts)
   local args = adapter:get_args(query, opts)
 
   -- Execute synchronously
-  local result = vim.system({ cmd, unpack(args) }, {
-    text = true,
-    timeout = opts.timeout or 30000,
-  }):wait()
+  local result = vim
+    .system({ cmd, unpack(args) }, {
+      text = true,
+      timeout = opts.timeout or 30000,
+    })
+    :wait()
 
   if result.code ~= 0 then
     local error_msg = result.stderr or "Command failed with exit code " .. result.code
