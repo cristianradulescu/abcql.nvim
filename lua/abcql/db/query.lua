@@ -108,4 +108,113 @@ function Query.execute_sync(adapter, query, opts)
   }, nil
 end
 
+--- Extract the SQL query at the cursor position based on semicolon delimiters
+--- @param bufnr number|nil Buffer number (defaults to current buffer)
+--- @return string The SQL query text (semicolon-delimited)
+function Query.get_query_at_cursor(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+  local start_line = 1
+  local end_line = #lines
+
+  for i = cursor_line - 1, 1, -1 do
+    if lines[i] and lines[i]:match(";%s*$") then
+      start_line = i + 1
+      break
+    end
+  end
+
+  for i = cursor_line, #lines do
+    if lines[i] and lines[i]:match(";%s*$") then
+      end_line = i
+      break
+    end
+  end
+
+  local query_lines = {}
+  for i = start_line, end_line do
+    if lines[i] then
+      table.insert(query_lines, lines[i])
+    end
+  end
+
+  local query = table.concat(query_lines, "\n")
+  return query:gsub(";%s*$", "")
+end
+
+--- Show query preview in a floating window and prompt for execution
+--- @param query string The SQL query to preview
+--- @param on_confirm function Callback to execute when user confirms
+--- @param on_reject function Callback to execute when user cancels
+local function show_query_confirmation_prompt(query, on_confirm, on_reject)
+  -- Create a scratch buffer for the preview
+  local buf = vim.api.nvim_create_buf(false, true)
+
+  -- Split query into lines and set in buffer
+  local lines = vim.split(query, "\n")
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.api.nvim_buf_set_option(buf, "filetype", "sql")
+  vim.api.nvim_buf_set_option(buf, "modifiable", false)
+  vim.api.nvim_buf_set_option(buf, "bufhidden", "wipe")
+
+  -- Calculate window size based on content
+  local width = math.min(80, vim.o.columns - 4)
+  local height = math.min(#lines + 2, math.floor(vim.o.lines * 0.8))
+
+  -- Create centered floating window
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    width = width,
+    height = height,
+    row = math.floor((vim.o.lines - height) / 2),
+    col = math.floor((vim.o.columns - width) / 2),
+    style = "minimal",
+    border = "rounded",
+    title = " Execute Query? (<CR>=Yes, q=No) ",
+    title_pos = "center",
+  })
+  vim.api.nvim_set_option_value("wrap", true, { win = win })
+
+  -- Keybinding: Enter to confirm and execute
+  vim.keymap.set("n", "<CR>", function()
+    vim.api.nvim_win_close(win, true)
+    on_confirm()
+  end, { buffer = buf, desc = "Execute query" })
+
+  -- Keybinding: q to cancel
+  vim.keymap.set("n", "q", function()
+    vim.api.nvim_win_close(win, true)
+    on_reject()
+  end, { buffer = buf, desc = "Cancel" })
+
+  -- Keybinding: Escape to cancel
+  vim.keymap.set("n", "<Esc>", function()
+    vim.api.nvim_win_close(win, true)
+    vim.notify("Query execution cancelled.", vim.log.levels.INFO)
+  end, { buffer = buf, desc = "Cancel" })
+end
+
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "sql",
+  callback = function()
+    vim.keymap.set("n", "<leader>Se", function()
+      local Query = require("abcql.db.query")
+      local query_at_cursor = Query.get_query_at_cursor()
+
+      if query_at_cursor ~= "" then
+        -- Show query preview in floating window
+        show_query_confirmation_prompt(query_at_cursor, function()
+          vim.notify("Executing query:\n" .. query_at_cursor, vim.log.levels.INFO)
+          -- Here you would call the query execution function
+        end,
+        function() end)
+      else
+        vim.notify("No query found at cursor", vim.log.levels.WARN)
+      end
+    end, { buffer = true, desc = "Execute SQL query" })
+  end,
+})
+
 return Query

@@ -58,15 +58,14 @@ function UI.open(opts)
     end
   end
 
-  -- Check if UI is already open by checking if any buffer exists and is valid
-  vim.print(vim.inspect(state.editor_buf))
-  vim.print(vim.inspect(opts.editor_buf))
+  -- Set editor buffer based on provided buffer
   if state.editor_buf == nil and opts.editor_buf ~= nil and vim.api.nvim_buf_is_valid(opts.editor_buf) then
-    vim.notify("abcql editor buf found", vim.log.levels.INFO)
     state.editor_buf = opts.editor_buf
+  else
+    vim.notify("abcql UI is missing the query editor", vim.log.levels.ERROR)
+    return
   end
 
-  vim.notify("Opening abcql UI", vim.log.levels.INFO)
 
   -- Create buffers with nofile type and nobuflisted to prevent them from
   -- appearing in buffer lists and being mixed with regular file buffers
