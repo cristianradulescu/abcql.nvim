@@ -20,10 +20,12 @@ function M.setup(opts)
 
   -- Initialize connection registry with data sources
   require("abcql.db").setup()
+end
 
-  vim.api.nvim_create_user_command("Abcql", function()
-    vim.notify(vim.inspect(config), vim.log.levels.INFO, { title = "abcql Config" })
-  end, {})
+--- Returns a deep copy of the current configuration
+---@return abcql.Config
+function M.dump()
+  return vim.inspect(vim.deepcopy(config))
 end
 
 setmetatable(M, {
