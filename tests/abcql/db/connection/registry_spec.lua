@@ -80,7 +80,6 @@ describe("ConnectionRegistry", function()
     end)
   end)
 
-
   describe("get_connection", function()
     local MockAdapter
     local mock_instance

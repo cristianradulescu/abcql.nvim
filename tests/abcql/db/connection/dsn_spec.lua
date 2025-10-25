@@ -1,7 +1,6 @@
 local dsn_handler = require("abcql.db.connection.dsn")
 
 describe("dsn_handler", function()
-
   describe("parse_dsn", function()
     it("should parse valid MySQL DSN with all components", function()
       local dsn = "mysql://user:password@localhost:3306/mydb"

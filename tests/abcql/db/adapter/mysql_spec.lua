@@ -22,6 +22,7 @@ describe("MySQLAdapter", function()
     it("should inherit from base Adapter", function()
       local Adapter = require("abcql.db.adapter.base")
       assert.is_not_nil(getmetatable(getmetatable(adapter)).__index)
+      assert.are.equal(Adapter, getmetatable(getmetatable(adapter)).__index)
     end)
   end)
 

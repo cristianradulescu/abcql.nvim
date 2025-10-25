@@ -136,7 +136,6 @@ describe("Config", function()
       }
 
       Config.setup(first_config)
-      local db1_value = Config.data_sources.db1
 
       package.loaded["abcql.config"] = nil
       Config = require("abcql.config")

@@ -18,3 +18,4 @@ check: lint format
 test:
 	@echo "Running tests..."
 	@nvim --headless --noplugin -u tests/minimal_init.lua -c "PlenaryBustedDirectory tests/ { minimal_init = 'tests/minimal_init.lua' }"
+	@nvim --headless -u NONE -c "luafile tests/minimal_test.lua"
