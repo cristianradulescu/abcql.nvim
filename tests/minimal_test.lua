@@ -6,10 +6,21 @@ require("abcql").setup({
   },
 })
 
+-- Mock vim.ui.select for headless testing to prevent it from hanging
+local original_vim_ui_select = vim.ui.select
+vim.ui.select = function(items, opts, on_choice)
+  -- Simulate selecting the 'test' data source, which is configured above
+  on_choice("test")
+end
+
 print("=== Testing MySQLAdapter:execute_query() ===\n")
 
 local db = require("abcql.db")
-local adapter, err = db.connect("mysql://dbuser:dbpassword@localhost:3306/bookstore")
+db.activate_datasource(vim.api.nvim_get_current_buf())
+print("✓ Activated data source for current buffer")
+local active_dsn = db.connectionRegistry:get_datasource(db.get_active_datasource(vim.api.nvim_get_current_buf()))
+print("✓ Active DSN: " .. (active_dsn or "nil"))
+local adapter, err = db.connectionRegistry:get_connection(active_dsn)
 if not adapter then
   print("❌ FAILED to connect: " .. err)
   return
@@ -63,6 +74,7 @@ print("\n=== Waiting for async results... ===")
 
 -- Keep running for async callbacks
 vim.defer_fn(function()
+  vim.ui.select = original_vim_ui_select
   print("\n=== All tests completed ===")
   vim.cmd("qa!")
 end, 2000)

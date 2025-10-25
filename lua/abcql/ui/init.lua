@@ -66,7 +66,6 @@ function UI.open(opts)
     return
   end
 
-
   -- Create buffers with nofile type and nobuflisted to prevent them from
   -- appearing in buffer lists and being mixed with regular file buffers
   state.results_buf = vim.api.nvim_create_buf(false, true)

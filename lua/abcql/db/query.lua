@@ -196,25 +196,18 @@ local function show_query_confirmation_prompt(query, on_confirm, on_reject)
   end, { buffer = buf, desc = "Cancel" })
 end
 
-vim.api.nvim_create_autocmd("FileType", {
-  pattern = "sql",
-  callback = function()
-    vim.keymap.set("n", "<leader>Se", function()
-      local Query = require("abcql.db.query")
-      local query_at_cursor = Query.get_query_at_cursor()
-
-      if query_at_cursor ~= "" then
-        -- Show query preview in floating window
-        show_query_confirmation_prompt(query_at_cursor, function()
-          vim.notify("Executing query:\n" .. query_at_cursor, vim.log.levels.INFO)
-          -- Here you would call the query execution function
-        end,
-        function() end)
-      else
-        vim.notify("No query found at cursor", vim.log.levels.WARN)
-      end
-    end, { buffer = true, desc = "Execute SQL query" })
-  end,
-})
+--- Execute the SQL query located at the current cursor position
+function Query.execute_query_at_cursor()
+  local query_at_cursor = Query.get_query_at_cursor()
+  if query_at_cursor ~= "" then
+    -- Show query preview in floating window
+    show_query_confirmation_prompt(query_at_cursor, function()
+      vim.notify("Executing query:\n" .. query_at_cursor, vim.log.levels.INFO)
+      -- @TODO: call the query execution function
+    end, function() end)
+  else
+    vim.notify("No query found at cursor", vim.log.levels.WARN)
+  end
+end
 
 return Query

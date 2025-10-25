@@ -1,5 +1,6 @@
 ---@class abcql.db.connection.Registry
 ---@field private adapters table<string, abcql.db.adapter.Adapter> Registered adapter classes by scheme
+---@field private datasources table<string, string> Registered data sources by name
 ---@field private connections table<string, abcql.db.adapter.Adapter> Active connection instances by DSN
 local Registry = {}
 Registry.__index = Registry
@@ -9,6 +10,7 @@ Registry.__index = Registry
 function Registry.new()
   local self = setmetatable({}, Registry)
   self.adapters = {}
+  self.datasources = {}
   self.connections = {}
   return self
 end
@@ -18,6 +20,26 @@ end
 --- @param adapter_class table The adapter class with a .new() constructor
 function Registry:register_adapter(scheme, adapter_class)
   self.adapters[scheme:lower()] = adapter_class
+end
+
+--- Register a data source name (DSN) with a friendly name
+--- @param name string The friendly name for the data source
+--- @param dsn string The data source name (DSN) string
+function Registry:register_datasource(name, dsn)
+  self.datasources[name] = dsn
+end
+
+--- Get a registered data source by name
+--- @param name string The friendly name of the data source
+--- @return string|nil The DSN string if found, nil otherwise
+function Registry:get_datasource(name)
+  return self.datasources[name]
+end
+
+--- Get all registered data sources
+--- @return table<string, string> Table of data source names to DSN strings
+function Registry:get_all_datasources()
+  return self.datasources
 end
 
 --- Get or create a connection for a DSN

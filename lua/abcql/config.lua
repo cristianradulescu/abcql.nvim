@@ -19,7 +19,7 @@ function M.setup(opts)
   config = vim.tbl_deep_extend("force", {}, vim.deepcopy(defaults), opts or {})
 
   -- Initialize connection registry with data sources
-  require("abcql.db").setup()
+  require("abcql.db").setup(config)
 end
 
 --- Returns a deep copy of the current configuration

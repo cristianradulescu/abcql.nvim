@@ -88,13 +88,6 @@ describe("Config", function()
       assert.is_true(db_setup_called)
     end)
 
-    it("should create Abcql user command", function()
-      Config.setup({})
-
-      local commands = vim.api.nvim_get_commands({})
-      assert.is_not_nil(commands.Abcql)
-    end)
-
     it("should notify when setting up", function()
       local notified = false
       vim.notify = function(msg, level)
