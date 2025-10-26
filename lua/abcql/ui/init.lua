@@ -245,4 +245,51 @@ function UI.toggle_tree()
   end
 end
 
+--- Display query results in the results buffer
+--- @param results QueryResult Results object with columns, rows, and optional metadata (duration_ms)
+function UI.display(results)
+  local buf = state.results_buf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    UI.open()
+    UI.display(results)
+    return
+  end
+  vim.bo[buf].modifiable = true
+
+  local lines = {}
+
+  if not results.headers or #results.headers == 0 then
+    table.insert(lines, "No results")
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.bo[buf].modifiable = false
+    return
+  end
+
+  local format = require("abcql.ui.format")
+  local rows = results.rows or {}
+  local widths = format.calculate_column_widths(results.headers, rows)
+
+  table.insert(lines, format.create_separator(widths))
+  table.insert(lines, format.format_row(results.headers, widths))
+  table.insert(lines, format.create_separator(widths))
+
+  if #rows == 0 then
+    table.insert(lines, " No rows returned ")
+    table.insert(lines, format.create_separator(widths))
+  else
+    for _, row in ipairs(rows) do
+      table.insert(lines, format.format_row(row, widths))
+    end
+    table.insert(lines, format.create_separator(widths))
+  end
+
+  table.insert(lines, "")
+
+  local row_count = format.format_row_count(#rows)
+  table.insert(lines, string.format(" %s ", row_count))
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+end
+
 return UI

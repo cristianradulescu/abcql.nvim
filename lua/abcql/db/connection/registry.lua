@@ -69,7 +69,7 @@ end
 
 --- Get a registered data source by name
 --- @param name string The friendly name of the data source
---- @return Datasource|nil The DSN string if found, nil otherwise
+--- @return Datasource|nil The datasource details if found, nil otherwise
 function Registry:get_datasource(name)
   if not self.datasources[name] then
     return nil

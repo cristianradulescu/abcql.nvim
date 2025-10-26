@@ -1,10 +1,12 @@
 ---@class abcql.db.Query
 local Query = {}
 
+---@alias QueryResult { headers: string[], rows: table[], row_count: number }
+
 --- Execute a query asynchronously using vim.system
 --- @param adapter abcql.db.adapter.Adapter The database adapter
 --- @param query string The SQL query to execute
---- @param callback fun(results: table|nil, err: string|nil) Called with parsed results or error
+--- @param callback fun(results: QueryResult|nil, err: string|nil) Called with parsed results or error
 --- @param opts? table Optional parameters passed to adapter's get_args
 function Query.execute_async(adapter, query, callback, opts)
   opts = opts or {}
@@ -61,7 +63,7 @@ end
 --- @param adapter abcql.db.adapter.Adapter The database adapter
 --- @param query string The SQL query to execute
 --- @param opts? table Optional parameters
---- @return table|nil results Parsed results
+--- @return QueryResult|nil results Parsed results
 --- @return string|nil error Error message if failed
 function Query.execute_sync(adapter, query, opts)
   opts = opts or {}
@@ -203,7 +205,15 @@ function Query.execute_query_at_cursor()
     -- Show query preview in floating window
     show_query_confirmation_prompt(query_at_cursor, function()
       vim.notify("Executing query:\n" .. query_at_cursor, vim.log.levels.INFO)
-      -- @TODO: call the query execution function
+      local active_datasource = require("abcql.db").get_active_datasource(vim.api.nvim_get_current_buf())
+      Query.execute_async(active_datasource.adapter, query_at_cursor, function(results, err)
+        if err then
+          vim.notify("Query execution failed: " .. err, vim.log.levels.ERROR)
+          return
+        end
+
+        require("abcql.ui").display(results)
+      end)
     end, function() end)
   else
     vim.notify("No query found at cursor", vim.log.levels.WARN)

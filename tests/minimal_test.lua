@@ -15,7 +15,7 @@ end
 
 print("=== Testing MySQLAdapter:execute_query() ===\n")
 
-local current_buf= vim.api.nvim_get_current_buf()
+local current_buf = vim.api.nvim_get_current_buf()
 local db = require("abcql.db")
 db.activate_datasource(current_buf)
 print("✓ Activated data source for current buffer")
@@ -42,7 +42,8 @@ end)
 
 -- Test 2: Sync query (no callback)
 print("--- Test 2: Sync Query (no callback) ---")
-local sync_results, sync_err = adapter:execute_query("SELECT last_name FROM authors LIMIT 3", { skip_column_names = false })
+local sync_results, sync_err =
+  adapter:execute_query("SELECT last_name FROM authors LIMIT 3", { skip_column_names = false })
 if sync_err then
   print("❌ Sync query failed: " .. sync_err)
 else
