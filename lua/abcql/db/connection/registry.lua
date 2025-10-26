@@ -1,6 +1,8 @@
+---@alias Datasource { name: string, dsn: string, adapter?: abcql.db.adapter.Adapter }
+
 ---@class abcql.db.connection.Registry
 ---@field private adapters table<string, abcql.db.adapter.Adapter> Registered adapter classes by scheme
----@field private datasources table<string, string> Registered data sources by name
+---@field private datasources table<string, Datasource> Registered data sources by name
 ---@field private connections table<string, abcql.db.adapter.Adapter> Active connection instances by DSN
 local Registry = {}
 Registry.__index = Registry
@@ -11,7 +13,6 @@ function Registry.new()
   local self = setmetatable({}, Registry)
   self.adapters = {}
   self.datasources = {}
-  self.connections = {}
   return self
 end
 
@@ -25,31 +26,12 @@ end
 --- Register a data source name (DSN) with a friendly name
 --- @param name string The friendly name for the data source
 --- @param dsn string The data source name (DSN) string
+--- @return Datasource|nil The registered data source if successful, nil otherwise
+--- @return string|nil Error message if registration failed
 function Registry:register_datasource(name, dsn)
-  self.datasources[name] = dsn
-end
-
---- Get a registered data source by name
---- @param name string The friendly name of the data source
---- @return string|nil The DSN string if found, nil otherwise
-function Registry:get_datasource(name)
-  return self.datasources[name]
-end
-
---- Get all registered data sources
---- @return table<string, string> Table of data source names to DSN strings
-function Registry:get_all_datasources()
-  return self.datasources
-end
-
---- Get or create a connection for a DSN
---- @param dsn string The data source name
---- @return abcql.db.adapter.Adapter|nil The adapter instance
---- @return string|nil Error message if connection failed
-function Registry:get_connection(dsn)
-  -- Check if connection already exists
-  if self.connections[dsn] then
-    return self.connections[dsn], nil
+  -- Check if data source already exists
+  if self.datasources[name] then
+    return self.datasources[name], nil
   end
 
   -- Parse DSN
@@ -74,10 +56,32 @@ function Registry:get_connection(dsn)
     options = parsed.options,
   })
 
-  -- Cache connection
-  self.connections[dsn] = adapter
+  local datasource = {
+    name = name,
+    dsn = dsn,
+    adapter = adapter,
+  }
 
-  return adapter, nil
+  self.datasources = vim.tbl_extend("force", self.datasources, { [name] = datasource })
+
+  return datasource, nil
+end
+
+--- Get a registered data source by name
+--- @param name string The friendly name of the data source
+--- @return Datasource|nil The DSN string if found, nil otherwise
+function Registry:get_datasource(name)
+  if not self.datasources[name] then
+    return nil
+  end
+
+  return self.datasources[name]
+end
+
+--- Get all registered data sources
+--- @return table<string, Datasource> Table of data source names to DSN strings
+function Registry:get_all_datasources()
+  return self.datasources
 end
 
 --- Get list of registered adapter schemes

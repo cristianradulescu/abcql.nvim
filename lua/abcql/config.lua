@@ -1,16 +1,18 @@
----@class abcql.config: abcql.Config
 local M = {}
 
----@class abcql.Config
+---@alias abcql.Config
+---| { datasources: table<string, string> } Mapping of data source names to DSN strings
+
+---@type abcql.Config
 local defaults = {
-  data_sources = {
+  datasources = {
     -- Examples:
     -- shop_dev = "mysql://user:password@localhost:3306/shop_db",
     -- shop_prod = "mysql://user:password@prodserv:3306/shop_db",
   },
 }
 
-local config = vim.deepcopy(defaults) --[[@as abcql.Config]]
+local config = vim.deepcopy(defaults)
 
 ---@param opts? abcql.Config
 function M.setup(opts)

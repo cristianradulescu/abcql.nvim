@@ -17,9 +17,9 @@ describe("Config", function()
   end)
 
   describe("defaults", function()
-    it("should have empty data_sources by default", function()
-      assert.is_table(Config.data_sources)
-      assert.are.equal(0, vim.tbl_count(Config.data_sources))
+    it("should have empty datasources by default", function()
+      assert.is_table(Config.datasources)
+      assert.are.equal(0, vim.tbl_count(Config.datasources))
     end)
   end)
 
@@ -38,38 +38,38 @@ describe("Config", function()
 
     it("should merge user config with defaults", function()
       Config.setup({
-        data_sources = {
+        datasources = {
           test_db = "mysql://user:pass@localhost:3306/testdb",
         },
       })
 
-      assert.is_not_nil(Config.data_sources.test_db)
-      assert.are.equal("mysql://user:pass@localhost:3306/testdb", Config.data_sources.test_db)
+      assert.is_not_nil(Config.datasources.test_db)
+      assert.are.equal("mysql://user:pass@localhost:3306/testdb", Config.datasources.test_db)
     end)
 
-    it("should override default data_sources", function()
+    it("should override default datasources", function()
       Config.setup({
-        data_sources = {
+        datasources = {
           custom_db = "postgres://user:pass@localhost:5432/customdb",
         },
       })
 
-      assert.is_not_nil(Config.data_sources.custom_db)
+      assert.is_not_nil(Config.datasources.custom_db)
     end)
 
     it("should handle multiple data sources", function()
       Config.setup({
-        data_sources = {
+        datasources = {
           db1 = "mysql://user:pass@localhost:3306/db1",
           db2 = "mysql://user:pass@localhost:3306/db2",
           db3 = "postgres://user:pass@localhost:5432/db3",
         },
       })
 
-      assert.are.equal(3, vim.tbl_count(Config.data_sources))
-      assert.is_not_nil(Config.data_sources.db1)
-      assert.is_not_nil(Config.data_sources.db2)
-      assert.is_not_nil(Config.data_sources.db3)
+      assert.are.equal(3, vim.tbl_count(Config.datasources))
+      assert.is_not_nil(Config.datasources.db1)
+      assert.is_not_nil(Config.datasources.db2)
+      assert.is_not_nil(Config.datasources.db3)
     end)
 
     it("should call database setup", function()
@@ -105,12 +105,12 @@ describe("Config", function()
   describe("metatable access", function()
     it("should allow accessing config values through module", function()
       Config.setup({
-        data_sources = {
+        datasources = {
           my_db = "mysql://user:pass@localhost:3306/mydb",
         },
       })
 
-      assert.are.equal(Config.data_sources.my_db, "mysql://user:pass@localhost:3306/mydb")
+      assert.are.equal(Config.datasources.my_db, "mysql://user:pass@localhost:3306/mydb")
     end)
 
     it("should return nil for non-existent keys", function()
@@ -123,7 +123,7 @@ describe("Config", function()
   describe("deep copy", function()
     it("should not mutate defaults when config is updated", function()
       local first_config = {
-        data_sources = {
+        datasources = {
           db1 = "mysql://user:pass@localhost:3306/db1",
         },
       }
@@ -134,18 +134,18 @@ describe("Config", function()
       Config = require("abcql.config")
 
       Config.setup({
-        data_sources = {
+        datasources = {
           db2 = "mysql://user:pass@localhost:3306/db2",
         },
       })
 
-      assert.is_nil(Config.data_sources.db1)
-      assert.is_not_nil(Config.data_sources.db2)
+      assert.is_nil(Config.datasources.db1)
+      assert.is_not_nil(Config.datasources.db2)
     end)
 
     it("should not mutate user options", function()
       local user_opts = {
-        data_sources = {
+        datasources = {
           original = "mysql://user:pass@localhost:3306/original",
         },
       }
@@ -156,13 +156,13 @@ describe("Config", function()
       Config = require("abcql.config")
 
       Config.setup({
-        data_sources = {
+        datasources = {
           modified = "mysql://user:pass@localhost:3306/modified",
         },
       })
 
-      assert.are.equal("mysql://user:pass@localhost:3306/original", user_opts.data_sources.original)
-      assert.is_nil(user_opts.data_sources.modified)
+      assert.are.equal("mysql://user:pass@localhost:3306/original", user_opts.datasources.original)
+      assert.is_nil(user_opts.datasources.modified)
     end)
   end)
 end)

@@ -26,7 +26,6 @@ describe("Database", function()
     it("should have setup function", function()
       assert.is_function(Database.setup)
     end)
-
   end)
 
   describe("setup", function()
@@ -40,23 +39,6 @@ describe("Database", function()
       local schemes = Database.connectionRegistry:get_schemes()
       assert.is_true(vim.tbl_contains(schemes, "mysql"))
     end)
-
-    it("should notify when adapters are registered", function()
-      local notified = false
-      vim.notify = function(msg, level)
-        if msg:match("Database adapters registered") then
-          notified = true
-        end
-      end
-
-      Database.setup({
-        data_sources = {
-          test_db = "mysql://user:pass@localhost:3306/testdb",
-        },
-      })
-
-      assert.is_true(notified)
-    end)
   end)
 
   describe("connect", function()
@@ -67,6 +49,5 @@ describe("Database", function()
         },
       })
     end)
-
   end)
 end)

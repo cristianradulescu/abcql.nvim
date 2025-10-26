@@ -1,7 +1,7 @@
 vim.opt.runtimepath:append(".")
 
 require("abcql").setup({
-  data_sources = {
+  datasources = {
     test = "mysql://dbuser:dbpassword@localhost:3306/bookstore",
   },
 })
@@ -15,17 +15,14 @@ end
 
 print("=== Testing MySQLAdapter:execute_query() ===\n")
 
+local current_buf= vim.api.nvim_get_current_buf()
 local db = require("abcql.db")
-db.activate_datasource(vim.api.nvim_get_current_buf())
+db.activate_datasource(current_buf)
 print("✓ Activated data source for current buffer")
-local active_dsn = db.connectionRegistry:get_datasource(db.get_active_datasource(vim.api.nvim_get_current_buf()))
-print("✓ Active DSN: " .. (active_dsn or "nil"))
-local adapter, err = db.connectionRegistry:get_connection(active_dsn)
-if not adapter then
-  print("❌ FAILED to connect: " .. err)
-  return
-end
+local active_datasource = db.connectionRegistry:get_datasource(db.get_active_datasource(current_buf).name)
+print("✓ Active datasource: " .. (active_datasource.name or "nil"))
 
+local adapter = active_datasource.adapter
 print("✓ Got adapter: " .. type(adapter))
 print("✓ Adapter type: " .. (adapter.get_command and adapter:get_command() or "unknown"))
 print()
@@ -45,7 +42,7 @@ end)
 
 -- Test 2: Sync query (no callback)
 print("--- Test 2: Sync Query (no callback) ---")
-local sync_results, sync_err = adapter:execute_query("SELECT User FROM user LIMIT 3", { skip_column_names = false })
+local sync_results, sync_err = adapter:execute_query("SELECT last_name FROM authors LIMIT 3", { skip_column_names = false })
 if sync_err then
   print("❌ Sync query failed: " .. sync_err)
 else

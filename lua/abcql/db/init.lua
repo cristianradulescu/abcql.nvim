@@ -4,7 +4,7 @@ local ConnectionRegistry = require("abcql.db.connection.registry")
 local Database = {
   --- @type abcql.db.connection.Registry
   connectionRegistry = nil,
-  --- @type table<number, string> Maps buffer numbers to active data source names
+  --- @type table<number, Datasource> Maps buffer numbers to active data source names
   buffer_datasources = {},
 }
 
@@ -18,11 +18,9 @@ function Database.setup(config)
   Database.connectionRegistry:register_adapter("mysql", MySQLAdapter)
   -- @TODO: Register other adapters like PostgreSQL, SQLite, etc.
 
-  vim.notify("Database adapters registered", vim.log.levels.INFO)
-
   -- Register data sources from config
-  for dsn_name, dsn in pairs(config.data_sources or {}) do
-    Database.connectionRegistry:register_datasource(dsn_name, dsn)
+  for name, dsn in pairs(config.datasources or {}) do
+    Database.connectionRegistry:register_datasource(name, dsn)
   end
 end
 
@@ -31,25 +29,23 @@ end
 function Database.activate_datasource(bufnr)
   vim.ui.select(
     vim.tbl_keys(Database.connectionRegistry:get_all_datasources()),
-    { prompt = "Select Data Source:" },
+    { prompt = "Select datasource:" },
     function(datasource_name)
-      local dsn = Database.connectionRegistry:get_datasource(datasource_name)
-      if not dsn then
-        vim.notify("Data source not found: " .. datasource_name, vim.log.levels.ERROR)
-        return
-      end
-
-      local adapter, err = Database.connectionRegistry:get_connection(dsn)
-      if not adapter then
-        vim.notify("Failed to connect to data source: " .. err, vim.log.levels.ERROR)
+      local datasource, err = Database.connectionRegistry:get_datasource(datasource_name)
+      if err then
+        vim.notify("Error retrieving datasource: " .. err, vim.log.levels.ERROR)
         return
       end
 
       -- Store active data source for the buffer
-      Database.buffer_datasources[bufnr] = datasource_name
+      Database.buffer_datasources[bufnr] = datasource
 
       -- Update winbar to show connected data source
-      vim.api.nvim_buf_set_option(bufnr, "winbar", "[abcql.nvim] | Data source: `" .. datasource_name .. "`")
+      vim.api.nvim_buf_set_option(
+        bufnr,
+        "winbar",
+        "[abcql.nvim] | Data source: `" .. (datasource and datasource.name or "`Not selected`") .. "`"
+      )
 
       vim.notify("Connected to data source: " .. datasource_name, vim.log.levels.INFO)
     end
@@ -58,7 +54,7 @@ end
 
 --- Get the active data source name for a buffer
 --- @param bufnr number
---- @return string|nil
+--- @return Datasource|nil
 function Database.get_active_datasource(bufnr)
   return Database.buffer_datasources[bufnr]
 end
