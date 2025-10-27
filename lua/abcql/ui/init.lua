@@ -74,26 +74,8 @@ local function create_data_source_tree_buffer()
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(buf, "[abcql] Data Sources")
   vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
-  -- vim.api.nvim_buf_set_option(buf, "buflisted", false)
   vim.api.nvim_buf_set_option(buf, "bufhidden", "hide")
   vim.api.nvim_buf_set_option(buf, "swapfile", false)
-
-  -- Dummy data source tree content
-  local lines = {
-    "Data Sources:",
-    "",
-    "- datasource_1",
-    "  - database_1",
-    "    - table_1",
-    "    - table_2",
-    "  - database_2",
-    "- datasource_2",
-    "  - database_a",
-    "    - table_x",
-    "    - table_y",
-  }
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.api.nvim_buf_set_option(buf, "modifiable", false)
 
   local win_options_callback = function(win)
     vim.api.nvim_set_option_value("wrap", false, { win = win, scope = "local" })
@@ -105,6 +87,54 @@ local function create_data_source_tree_buffer()
   end
 
   return buf, win_options_callback
+end
+
+--- Refresh the datasource tree display
+--- Preserves tree state (expanded nodes and loaded children) across refreshes
+--- Only builds a new tree from registry if no tree exists yet
+local function refresh_datasource_tree()
+  local buf = state.datasource_tree_buf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+
+  local Tree = require("abcql.ui.tree")
+  local root = Tree.get_root()
+
+  if not root then
+    local db = require("abcql.db")
+    root = Tree.build_from_registry(db.connectionRegistry)
+  end
+
+  local lines = Tree.render(root)
+
+  vim.bo[buf].modifiable = true
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+end
+
+--- Setup keymaps for the datasource tree buffer
+--- Keymaps:
+---   <CR> - Expand/collapse node (lazy loads children on first expand)
+---   r    - Refresh tree display
+--- @param buf number Buffer ID
+local function setup_tree_keymaps(buf)
+  local Tree = require("abcql.ui.tree")
+
+  vim.keymap.set("n", "<CR>", function()
+    local line_num = vim.api.nvim_win_get_cursor(0)[1]
+    local node = Tree.get_node_at_line(line_num)
+
+    if node then
+      Tree.toggle_node(node, function()
+        refresh_datasource_tree()
+      end)
+    end
+  end, { buffer = buf, desc = "Expand/collapse tree node" })
+
+  vim.keymap.set("n", "r", function()
+    refresh_datasource_tree()
+  end, { buffer = buf, desc = "Refresh datasource tree" })
 end
 
 --- Open the abcql UI
@@ -147,6 +177,9 @@ function UI.open(opts)
   local results_win_opts, datasource_win_opts
   state.results_buf, results_win_opts = create_results_buffer()
   state.datasource_tree_buf, datasource_win_opts = create_data_source_tree_buffer()
+
+  setup_tree_keymaps(state.datasource_tree_buf)
+  refresh_datasource_tree()
 
   -- Create the window layout
   -- Layout structure:
