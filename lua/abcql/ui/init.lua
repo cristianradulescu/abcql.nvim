@@ -9,18 +9,103 @@ local state = {
   -- Buffer IDs for the main components
   editor_buf = nil,
   results_buf = nil,
-  data_source_tree_buf = nil,
+  datasource_tree_buf = nil,
 
   -- Window IDs for the main components
   editor_win = nil,
   results_win = nil,
-  data_source_tree_win = nil,
+  datasource_tree_win = nil,
 
   -- Visibility state for togglable components
   -- editor is always visible when UI is open
   results_visible = false,
   data_source_tree_visible = false,
 }
+
+--- Create the query editor buffer
+--- @return number buf Buffer ID
+local function create_editor_buffer()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_name(buf, "[abcql] SQL console")
+  vim.api.nvim_buf_set_option(buf, "filetype", "sql")
+  vim.api.nvim_buf_set_option(buf, "buftype", "")
+  vim.api.nvim_buf_set_option(buf, "bufhidden", "hide")
+  vim.api.nvim_buf_set_option(buf, "swapfile", false)
+
+  -- Insert initial content into the editor buffer
+  local initial_lines = {
+    "-- abcql SQL Console",
+    "",
+    "show tables;",
+    "",
+  }
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, initial_lines)
+
+  return buf
+end
+
+--- Create the results buffer
+--- @return number buf Buffer ID
+--- @return fun(win: number) win_options_callback Callback to set window options
+local function create_results_buffer()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_name(buf, "[abcql] Query Results")
+  vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
+  vim.api.nvim_buf_set_option(buf, "bufhidden", "hide")
+  vim.api.nvim_buf_set_option(buf, "swapfile", false)
+  vim.api.nvim_buf_set_option(buf, "modifiable", false) -- Results are read-only
+
+  local win_options_callback = function(win)
+    vim.api.nvim_set_option_value("wrap", false, { win = win, scope = "local" })
+    vim.api.nvim_set_option_value("number", false, { win = win, scope = "local" })
+    vim.api.nvim_set_option_value("relativenumber", false, { win = win, scope = "local" })
+    vim.api.nvim_set_option_value("spell", false, { win = win, scope = "local" })
+    vim.api.nvim_set_option_value("signcolumn", "no", { win = win, scope = "local" })
+    vim.api.nvim_set_option_value("colorcolumn", "", { win = win, scope = "local" })
+  end
+
+  return buf, win_options_callback
+end
+
+--- Create the data source tree buffer
+--- @return number buf Buffer ID
+--- @return fun(win: number) win_options_callback Callback to set window options
+local function create_data_source_tree_buffer()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_name(buf, "[abcql] Data Sources")
+  vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
+  -- vim.api.nvim_buf_set_option(buf, "buflisted", false)
+  vim.api.nvim_buf_set_option(buf, "bufhidden", "hide")
+  vim.api.nvim_buf_set_option(buf, "swapfile", false)
+
+  -- Dummy data source tree content
+  local lines = {
+    "Data Sources:",
+    "",
+    "- datasource_1",
+    "  - database_1",
+    "    - table_1",
+    "    - table_2",
+    "  - database_2",
+    "- datasource_2",
+    "  - database_a",
+    "    - table_x",
+    "    - table_y",
+  }
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.api.nvim_buf_set_option(buf, "modifiable", false)
+
+  local win_options_callback = function(win)
+    vim.api.nvim_set_option_value("wrap", false, { win = win, scope = "local" })
+    vim.api.nvim_set_option_value("number", false, { win = win, scope = "local" })
+    vim.api.nvim_set_option_value("relativenumber", false, { win = win, scope = "local" })
+    vim.api.nvim_set_option_value("spell", false, { win = win, scope = "local" })
+    vim.api.nvim_set_option_value("signcolumn", "no", { win = win, scope = "local" })
+    vim.api.nvim_set_option_value("colorcolumn", "", { win = win, scope = "local" })
+  end
+
+  return buf, win_options_callback
+end
 
 --- Open the abcql UI
 --- Creates a three-panel layout: query editor (top), results (bottom), data source tree (right)
@@ -38,14 +123,7 @@ function UI.open(opts)
         prompt = "abcql UI requires a SQL file buffer. Create one?",
       }, function(choice)
         if choice == "Yes" then
-          local scratch_buf = vim.api.nvim_create_buf(false, true)
-          vim.api.nvim_buf_set_name(scratch_buf, "[abcql] SQL console")
-          vim.api.nvim_buf_set_option(scratch_buf, "filetype", "sql")
-          vim.api.nvim_buf_set_option(scratch_buf, "buftype", "")
-          vim.api.nvim_buf_set_option(scratch_buf, "buflisted", false)
-          vim.api.nvim_buf_set_option(scratch_buf, "bufhidden", "hide")
-          vim.api.nvim_buf_set_option(scratch_buf, "swapfile", false)
-          vim.api.nvim_set_current_buf(scratch_buf)
+          local scratch_buf = create_editor_buffer()
           UI.open({ editor_buf = scratch_buf })
         end
       end)
@@ -66,22 +144,9 @@ function UI.open(opts)
     return
   end
 
-  -- Create buffers with nofile type and nobuflisted to prevent them from
-  -- appearing in buffer lists and being mixed with regular file buffers
-  state.results_buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(state.results_buf, "[abcql] Query Results")
-  vim.api.nvim_buf_set_option(state.results_buf, "buflisted", false)
-  vim.api.nvim_buf_set_option(state.results_buf, "buftype", "nofile")
-  vim.api.nvim_buf_set_option(state.results_buf, "bufhidden", "hide")
-  vim.api.nvim_buf_set_option(state.results_buf, "swapfile", false)
-  vim.api.nvim_buf_set_option(state.results_buf, "modifiable", false) -- Results are read-only
-
-  state.data_source_tree_buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(state.data_source_tree_buf, "[abcql] Data Sources")
-  vim.api.nvim_buf_set_option(state.data_source_tree_buf, "buflisted", false)
-  vim.api.nvim_buf_set_option(state.data_source_tree_buf, "buftype", "nofile")
-  vim.api.nvim_buf_set_option(state.data_source_tree_buf, "bufhidden", "hide")
-  vim.api.nvim_buf_set_option(state.data_source_tree_buf, "swapfile", false)
+  local results_win_opts, datasource_win_opts
+  state.results_buf, results_win_opts = create_results_buffer()
+  state.datasource_tree_buf, datasource_win_opts = create_data_source_tree_buffer()
 
   -- Create the window layout
   -- Layout structure:
@@ -98,15 +163,17 @@ function UI.open(opts)
 
   -- Create vertical split on the right for the data source tree (30 columns wide)
   vim.cmd("vertical rightbelow split")
-  state.data_source_tree_win = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(state.data_source_tree_win, state.data_source_tree_buf)
-  vim.api.nvim_win_set_width(state.data_source_tree_win, 30)
+  state.datasource_tree_win = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_buf(state.datasource_tree_win, state.datasource_tree_buf)
+  vim.api.nvim_win_set_width(state.datasource_tree_win, 30)
+  datasource_win_opts(state.datasource_tree_win)
 
   -- Go back to the editor window and create horizontal split below for results
   vim.api.nvim_set_current_win(state.editor_win)
   vim.cmd("rightbelow split")
   state.results_win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(state.results_win, state.results_buf)
+  results_win_opts(state.results_win)
 
   -- Set the results window height to 40% of available height
   local total_height = vim.o.lines - vim.o.cmdheight - 2 -- Account for statusline and tabline
@@ -120,8 +187,8 @@ function UI.open(opts)
   -- winfixwidth/winfixheight prevent accidental resizing via window commands
   vim.api.nvim_set_option_value("winfixbuf", true, { win = state.editor_win })
   vim.api.nvim_set_option_value("winfixbuf", true, { win = state.results_win })
-  vim.api.nvim_set_option_value("winfixbuf", true, { win = state.data_source_tree_win })
-  vim.api.nvim_set_option_value("winfixwidth", true, { win = state.data_source_tree_win })
+  vim.api.nvim_set_option_value("winfixbuf", true, { win = state.datasource_tree_win })
+  vim.api.nvim_set_option_value("winfixwidth", true, { win = state.datasource_tree_win })
 
   -- Initialize visibility state
   state.results_visible = true
@@ -140,17 +207,17 @@ function UI.close()
     vim.api.nvim_buf_delete(state.results_buf, { force = true })
   end
 
-  if state.data_source_tree_buf and vim.api.nvim_buf_is_valid(state.data_source_tree_buf) then
-    vim.api.nvim_buf_delete(state.data_source_tree_buf, { force = true })
+  if state.datasource_tree_buf and vim.api.nvim_buf_is_valid(state.datasource_tree_buf) then
+    vim.api.nvim_buf_delete(state.datasource_tree_buf, { force = true })
   end
 
   -- Reset state
   state.editor_buf = nil
   state.results_buf = nil
-  state.data_source_tree_buf = nil
+  state.datasource_tree_buf = nil
   state.editor_win = nil
   state.results_win = nil
-  state.data_source_tree_win = nil
+  state.datasource_tree_win = nil
   state.results_visible = false
   state.data_source_tree_visible = false
 
@@ -213,9 +280,9 @@ function UI.toggle_tree()
 
   if state.data_source_tree_visible then
     -- Hide the tree panel
-    if state.data_source_tree_win and vim.api.nvim_win_is_valid(state.data_source_tree_win) then
-      vim.api.nvim_win_close(state.data_source_tree_win, false)
-      state.data_source_tree_win = nil
+    if state.datasource_tree_win and vim.api.nvim_win_is_valid(state.datasource_tree_win) then
+      vim.api.nvim_win_close(state.datasource_tree_win, false)
+      state.datasource_tree_win = nil
       state.data_source_tree_visible = false
     end
   else
@@ -227,13 +294,13 @@ function UI.toggle_tree()
     if state.editor_win and vim.api.nvim_win_is_valid(state.editor_win) then
       vim.api.nvim_set_current_win(state.editor_win)
       vim.cmd("vertical rightbelow split")
-      state.data_source_tree_win = vim.api.nvim_get_current_win()
-      vim.api.nvim_win_set_buf(state.data_source_tree_win, state.data_source_tree_buf)
+      state.datasource_tree_win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(state.datasource_tree_win, state.datasource_tree_buf)
 
       -- Set window width and options
-      vim.api.nvim_win_set_width(state.data_source_tree_win, 30)
-      vim.api.nvim_set_option_value("winfixbuf", true, { win = state.data_source_tree_win })
-      vim.api.nvim_set_option_value("winfixwidth", true, { win = state.data_source_tree_win })
+      vim.api.nvim_win_set_width(state.datasource_tree_win, 30)
+      vim.api.nvim_set_option_value("winfixbuf", true, { win = state.datasource_tree_win })
+      vim.api.nvim_set_option_value("winfixwidth", true, { win = state.datasource_tree_win })
 
       state.data_source_tree_visible = true
 
