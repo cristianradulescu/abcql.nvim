@@ -22,7 +22,7 @@ end
 
 --- Get CLI arguments for MySQL query execution
 --- @param query string The SQL query to execute
---- @param opts table|nil Optional parameters (skip_column_names: boolean)
+--- @param opts table|nil Optional parameters (skip_column_names: boolean, database: string)
 --- @return table Array of command-line arguments for mysql CLI
 function MySQLAdapter:get_args(query, opts)
   opts = opts or {}
@@ -36,8 +36,10 @@ function MySQLAdapter:get_args(query, opts)
     table.insert(args, "-p" .. self.config.password)
   end
 
-  if self.config.database then
-    table.insert(args, "-D" .. self.config.database)
+  -- Use opts.database if provided, otherwise fall back to config.database
+  local database = opts.database or self.config.database
+  if database then
+    table.insert(args, "-D" .. database)
   end
 
   table.insert(args, "--batch")

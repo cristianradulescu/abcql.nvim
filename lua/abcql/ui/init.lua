@@ -117,6 +117,7 @@ end
 --- Keymaps:
 ---   <CR> - Expand/collapse node (lazy loads children on first expand)
 ---   r    - Refresh tree display
+---   <leader>Se - Browse table data (SELECT * FROM table LIMIT 1000)
 --- @param buf number Buffer ID
 local function setup_tree_keymaps(buf)
   local Tree = require("abcql.ui.tree")
@@ -135,6 +136,15 @@ local function setup_tree_keymaps(buf)
   vim.keymap.set("n", "r", function()
     refresh_datasource_tree()
   end, { buffer = buf, desc = "Refresh datasource tree" })
+
+  vim.keymap.set("n", "<leader>Se", function()
+    local line_num = vim.api.nvim_win_get_cursor(0)[1]
+    local node = Tree.get_node_at_line(line_num)
+
+    if node then
+      Tree.browse_table_data(node, function() end)
+    end
+  end, { buffer = buf, desc = "Browse table data" })
 end
 
 --- Open the abcql UI

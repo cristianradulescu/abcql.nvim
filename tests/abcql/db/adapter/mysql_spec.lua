@@ -142,6 +142,36 @@ describe("MySQLAdapter", function()
       assert.is_table(args)
     end)
 
+    it("should override database with opts.database", function()
+      local args = adapter:get_args("SELECT 1", { database = "override_db" })
+
+      local found_override = false
+      for _, arg in ipairs(args) do
+        if arg == "-Doverride_db" then
+          found_override = true
+        end
+        -- Make sure the config database is not used
+        if arg == "-Dtestdb" then
+          error("Should not use config database when opts.database is provided")
+        end
+      end
+
+      assert.is_true(found_override)
+    end)
+
+    it("should use config database when opts.database is not provided", function()
+      local args = adapter:get_args("SELECT 1", {})
+
+      local found_config_db = false
+      for _, arg in ipairs(args) do
+        if arg == "-Dtestdb" then
+          found_config_db = true
+        end
+      end
+
+      assert.is_true(found_config_db)
+    end)
+
     it("should properly format query argument", function()
       local query = "SELECT * FROM users WHERE id = 1"
       local args = adapter:get_args(query)

@@ -22,7 +22,6 @@ local ICONS = {
   database = "",
   table = "",
   column = "",
-
 }
 
 --- Create a new tree node
@@ -330,6 +329,56 @@ end
 --- @return TreeNode|nil Root node, or nil if tree hasn't been built yet
 function Tree.get_root()
   return state.root
+end
+
+--- Browse table data by executing a SELECT query
+--- Only works when called on a table node
+--- @param node TreeNode Table node to browse
+--- @param callback fun(success: boolean) Called after query execution
+function Tree.browse_table_data(node, callback)
+  if node.type ~= "table" then
+    vim.notify("Can only browse data for table nodes", vim.log.levels.WARN)
+    if callback then
+      callback(false)
+    end
+    return
+  end
+
+  local datasource = node.metadata.datasource
+  local database_name = node.metadata.database_name
+  local table_name = node.metadata.table_name
+
+  if not datasource or not datasource.adapter then
+    vim.notify("No adapter for table: " .. node.name, vim.log.levels.ERROR)
+    if callback then
+      callback(false)
+    end
+    return
+  end
+
+  -- Build SELECT query with LIMIT
+  local escaped_table = datasource.adapter:escape_identifier(table_name)
+  local query = string.format("SELECT * FROM %s LIMIT 1000", escaped_table)
+
+  vim.notify("Browsing table: " .. table_name, vim.log.levels.INFO)
+
+  local Query = require("abcql.db.query")
+  Query.execute_async(datasource.adapter, query, function(results, err)
+    if err then
+      vim.notify("Error browsing table: " .. err, vim.log.levels.ERROR)
+      if callback then
+        callback(false)
+      end
+      return
+    end
+
+    local UI = require("abcql.ui")
+    UI.display(results)
+
+    if callback then
+      callback(true)
+    end
+  end, { database = database_name })
 end
 
 return Tree
