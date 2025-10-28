@@ -1,5 +1,5 @@
 ---@class TreeNode
----@field type "datasource"|"database"|"table"|"column"
+---@field type "title"|"datasource"|"database"|"table"|"column"
 ---@field name string Display name of the node
 ---@field level number Indentation level (0 for datasource, 1 for database, etc.)
 ---@field expanded boolean Whether the node is currently expanded
@@ -15,13 +15,18 @@ local state = {
 }
 
 local ICONS = {
-  expanded = "▼",
-  collapsed = "▶",
+  expanded = "󰅀",
+  collapsed = "󰅂",
   leaf = "•",
+  datasource = "󰒍",
+  database = "",
+  table = "",
+  column = "",
+
 }
 
 --- Create a new tree node
---- @param type "datasource"|"database"|"table"|"column" Node type
+--- @param type "title"|"datasource"|"database"|"table"|"column" Node type
 --- @param name string Display name
 --- @param level number Indentation level (0 = datasource, 1 = database, 2 = table, 3 = column)
 --- @param metadata table Additional node context
@@ -42,7 +47,7 @@ end
 --- @param registry abcql.db.connection.Registry Connection registry containing datasources
 --- @return TreeNode Root node of the tree
 function Tree.build_from_registry(registry)
-  local root = create_node("root", "Data Sources", -1, {})
+  local root = create_node("title", "[ Data sources ]", -1, {})
   root.children = {}
   root.expanded = true
 
@@ -81,11 +86,19 @@ local function format_node_line(node)
   local icon
 
   if node.type == "column" then
-    icon = ICONS.leaf
+    icon = ICONS.column
   elseif node.expanded then
     icon = ICONS.expanded
   else
     icon = ICONS.collapsed
+  end
+
+  if node.type == "datasource" then
+    icon = icon .. " " .. ICONS.datasource
+  elseif node.type == "database" then
+    icon = icon .. " " .. ICONS.database
+  elseif node.type == "table" then
+    icon = icon .. " " .. ICONS.table
   end
 
   local display_name = node.name
@@ -94,7 +107,7 @@ local function format_node_line(node)
   end
 
   if node.level < 0 then
-    return display_name .. ":"
+    return display_name -- Root title node has no icon or indent
   end
 
   return indent .. icon .. " " .. display_name

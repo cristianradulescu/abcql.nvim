@@ -132,7 +132,7 @@ end
 --- @param callback function Called with (columns, error) where columns is array of {name, type} tables
 function MySQLAdapter:get_columns(database, table_name, callback)
   local query = string.format(
-    "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='%s' AND TABLE_NAME='%s'",
+    "SELECT COLUMN_NAME, COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='%s' AND TABLE_NAME='%s'",
     self:escape_value(database),
     self:escape_value(table_name)
   )
