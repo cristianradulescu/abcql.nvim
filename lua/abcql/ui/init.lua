@@ -226,9 +226,9 @@ function UI.open(opts)
   vim.api.nvim_set_current_win(state.editor_win)
 
   -- Configure window options to maintain layout integrity
-  -- winfixbuf prevents other buffers from being loaded in these windows (requires Neovim 0.10+)
+  -- winfixbuf prevents other buffers from being loaded in these windows; will enable it only for results and tree, we
+  -- should allow the editor window to be reused with other buffers
   -- winfixwidth/winfixheight prevent accidental resizing via window commands
-  vim.api.nvim_set_option_value("winfixbuf", true, { win = state.editor_win })
   vim.api.nvim_set_option_value("winfixbuf", true, { win = state.results_win })
   vim.api.nvim_set_option_value("winfixbuf", true, { win = state.datasource_tree_win })
   vim.api.nvim_set_option_value("winfixwidth", true, { win = state.datasource_tree_win })
