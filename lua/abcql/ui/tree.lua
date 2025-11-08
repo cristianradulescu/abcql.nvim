@@ -373,7 +373,7 @@ function Tree.browse_table_data(node, callback)
     end
 
     local UI = require("abcql.ui")
-    UI.display(results)
+    UI.display(results, "Table: " .. table_name)
 
     if callback then
       callback(true)

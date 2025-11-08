@@ -357,12 +357,16 @@ end
 
 --- Display query results in the results buffer
 --- @param results QueryResult Results object with columns, rows, and optional metadata (duration_ms)
-function UI.display(results)
+--- @param results_title string? Optional title for the results buffer
+function UI.display(results, results_title)
   local buf = state.results_buf
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
     UI.open()
-    UI.display(results)
+    UI.display(results, results_title)
     return
+  end
+  if results_title ~= nil then
+    vim.api.nvim_buf_set_name(buf, results_title)
   end
   vim.bo[buf].modifiable = true
 
