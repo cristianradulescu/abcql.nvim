@@ -156,6 +156,13 @@ local function show_query_confirmation_prompt(query, on_confirm, on_reject)
 
   -- Split query into lines and set in buffer
   local lines = vim.split(query, "\n")
+  -- Trim leading/trailing empty lines
+  while #lines > 0 and lines[1]:match("^%s*$") do
+    table.remove(lines, 1)
+  end
+  while #lines > 0 and lines[#lines]:match("^%s*$") do
+    table.remove(lines, #lines)
+  end
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.api.nvim_buf_set_option(buf, "filetype", "sql")
   vim.api.nvim_buf_set_option(buf, "modifiable", false)
