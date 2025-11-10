@@ -137,6 +137,54 @@ describe("MySQLAdapter", function()
       assert.is_false(has_skip)
     end)
 
+    it("should include -vvv flag for write queries", function()
+      local insert_args = adapter:get_args("INSERT INTO users (name) VALUES ('test')")
+      local update_args = adapter:get_args("UPDATE users SET name = 'test' WHERE id = 1")
+      local delete_args = adapter:get_args("DELETE FROM users WHERE id = 1")
+
+      local has_vvv_insert = false
+      for _, arg in ipairs(insert_args) do
+        if arg == "-vvv" then
+          has_vvv_insert = true
+          break
+        end
+      end
+
+      local has_vvv_update = false
+      for _, arg in ipairs(update_args) do
+        if arg == "-vvv" then
+          has_vvv_update = true
+          break
+        end
+      end
+
+      local has_vvv_delete = false
+      for _, arg in ipairs(delete_args) do
+        if arg == "-vvv" then
+          has_vvv_delete = true
+          break
+        end
+      end
+
+      assert.is_true(has_vvv_insert)
+      assert.is_true(has_vvv_update)
+      assert.is_true(has_vvv_delete)
+    end)
+
+    it("should not include -vvv flag for SELECT queries", function()
+      local args = adapter:get_args("SELECT * FROM users")
+
+      local has_vvv = false
+      for _, arg in ipairs(args) do
+        if arg == "-vvv" then
+          has_vvv = true
+          break
+        end
+      end
+
+      assert.is_false(has_vvv)
+    end)
+
     it("should handle nil opts", function()
       local args = adapter:get_args("SELECT 1", nil)
       assert.is_table(args)
@@ -294,6 +342,112 @@ describe("MySQLAdapter", function()
     it("should not modify strings without quotes", function()
       local result = adapter:escape_value("normal value")
       assert.are.equal("normal value", result)
+    end)
+  end)
+
+  describe("is_write_query", function()
+    it("should detect INSERT queries", function()
+      assert.is_true(adapter:is_write_query("INSERT INTO users (name) VALUES ('John')"))
+    end)
+
+    it("should detect UPDATE queries", function()
+      assert.is_true(adapter:is_write_query("UPDATE users SET name = 'Jane' WHERE id = 1"))
+    end)
+
+    it("should detect DELETE queries", function()
+      assert.is_true(adapter:is_write_query("DELETE FROM users WHERE id = 1"))
+    end)
+
+    it("should detect case-insensitive queries", function()
+      assert.is_true(adapter:is_write_query("insert into users (name) values ('John')"))
+      assert.is_true(adapter:is_write_query("update users set name = 'Jane'"))
+      assert.is_true(adapter:is_write_query("delete from users"))
+    end)
+
+    it("should handle queries with leading whitespace", function()
+      assert.is_true(adapter:is_write_query("  INSERT INTO users (name) VALUES ('John')"))
+      assert.is_true(adapter:is_write_query("\n\tUPDATE users SET name = 'Jane'"))
+    end)
+
+    it("should not detect SELECT queries as write queries", function()
+      assert.is_false(adapter:is_write_query("SELECT * FROM users"))
+    end)
+
+    it("should not detect SHOW queries as write queries", function()
+      assert.is_false(adapter:is_write_query("SHOW TABLES"))
+    end)
+
+    it("should not detect DESCRIBE queries as write queries", function()
+      assert.is_false(adapter:is_write_query("DESCRIBE users"))
+    end)
+  end)
+
+  describe("parse_write_output", function()
+    it("should parse INSERT query output", function()
+      local raw = "Query OK, 1 row affected (0.001 sec)"
+      local result = adapter:parse_write_output(raw)
+
+      assert.are.equal(1, result.affected_rows)
+      assert.are.equal(0, result.matched_rows)
+      assert.are.equal(0, result.changed_rows)
+      assert.are.equal(0, result.warnings)
+    end)
+
+    it("should parse UPDATE query output with matched/changed rows", function()
+      local raw = [[Query OK, 3 rows affected (0.001 sec)
+Rows matched: 5  Changed: 3  Warnings: 0]]
+      local result = adapter:parse_write_output(raw)
+
+      assert.are.equal(3, result.affected_rows)
+      assert.are.equal(5, result.matched_rows)
+      assert.are.equal(3, result.changed_rows)
+      assert.are.equal(0, result.warnings)
+    end)
+
+    it("should parse DELETE query output", function()
+      local raw = "Query OK, 10 rows affected (0.002 sec)"
+      local result = adapter:parse_write_output(raw)
+
+      assert.are.equal(10, result.affected_rows)
+    end)
+
+    it("should parse query with warnings", function()
+      local raw = [[Query OK, 2 rows affected (0.001 sec)
+Rows matched: 2  Changed: 2  Warnings: 1]]
+      local result = adapter:parse_write_output(raw)
+
+      assert.are.equal(2, result.affected_rows)
+      assert.are.equal(2, result.matched_rows)
+      assert.are.equal(2, result.changed_rows)
+      assert.are.equal(1, result.warnings)
+    end)
+
+    it("should parse query with 0 rows affected", function()
+      local raw = "Query OK, 0 rows affected (0.000 sec)"
+      local result = adapter:parse_write_output(raw)
+
+      assert.are.equal(0, result.affected_rows)
+    end)
+
+    it("should handle UPDATE with no actual changes", function()
+      local raw = [[Query OK, 0 rows affected (0.001 sec)
+Rows matched: 5  Changed: 0  Warnings: 0]]
+      local result = adapter:parse_write_output(raw)
+
+      assert.are.equal(0, result.affected_rows)
+      assert.are.equal(5, result.matched_rows)
+      assert.are.equal(0, result.changed_rows)
+      assert.are.equal(0, result.warnings)
+    end)
+
+    it("should handle empty output gracefully", function()
+      local raw = ""
+      local result = adapter:parse_write_output(raw)
+
+      assert.are.equal(0, result.affected_rows)
+      assert.are.equal(0, result.matched_rows)
+      assert.are.equal(0, result.changed_rows)
+      assert.are.equal(0, result.warnings)
     end)
   end)
 end)

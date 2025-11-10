@@ -1,7 +1,15 @@
 ---@class abcql.db.Query
 local Query = {}
 
----@alias QueryResult { headers: string[], rows: table[], row_count: number }
+---@alias QueryResult {
+--- headers: string[],
+--- rows: table[],
+--- row_count: number,
+--- query_type: string?,
+--- affected_rows: number?,
+--- matched_rows: number?,
+--- changed_rows: number?,
+--- warnings: number? }
 
 --- Execute a query asynchronously using vim.system
 --- @param adapter abcql.db.adapter.Adapter The database adapter
@@ -14,6 +22,9 @@ function Query.execute_async(adapter, query, callback, opts)
   -- Get CLI command and arguments from adapter
   local cmd = adapter:get_command()
   local args = adapter:get_args(query, opts)
+
+  -- Detect if this is a write query
+  local is_write = adapter.is_write_query and adapter:is_write_query(query) or false
 
   -- Execute command asynchronously
   vim.system({ cmd, unpack(args) }, {
@@ -28,7 +39,28 @@ function Query.execute_async(adapter, query, callback, opts)
         return
       end
 
-      -- Parse output using adapter
+      -- Handle write queries differently
+      if is_write and adapter.parse_write_output then
+        local ok, write_result = pcall(adapter.parse_write_output, adapter, result.stdout or "")
+        if not ok then
+          callback(nil, "Failed to parse write output: " .. tostring(write_result))
+          return
+        end
+
+        callback({
+          headers = {},
+          rows = {},
+          row_count = 0,
+          query_type = "write",
+          affected_rows = write_result.affected_rows,
+          matched_rows = write_result.matched_rows,
+          changed_rows = write_result.changed_rows,
+          warnings = write_result.warnings,
+        }, nil)
+        return
+      end
+
+      -- Parse output using adapter (for SELECT queries)
       local ok, parsed = pcall(adapter.parse_output, adapter, result.stdout or "")
       if not ok then
         callback(nil, "Failed to parse output: " .. tostring(parsed))
@@ -54,6 +86,7 @@ function Query.execute_async(adapter, query, callback, opts)
         headers = headers,
         rows = rows,
         row_count = #rows,
+        query_type = "select",
       }, nil)
     end)
   end)
@@ -71,6 +104,9 @@ function Query.execute_sync(adapter, query, opts)
   local cmd = adapter:get_command()
   local args = adapter:get_args(query, opts)
 
+  -- Detect if this is a write query
+  local is_write = adapter.is_write_query and adapter:is_write_query(query) or false
+
   -- Execute synchronously
   local result = vim
     .system({ cmd, unpack(args) }, {
@@ -82,6 +118,26 @@ function Query.execute_sync(adapter, query, opts)
   if result.code ~= 0 then
     local error_msg = result.stderr or "Command failed with exit code " .. result.code
     return nil, error_msg
+  end
+
+  -- Handle write queries differently
+  if is_write and adapter.parse_write_output then
+    local ok, write_result = pcall(adapter.parse_write_output, adapter, result.stdout or "")
+    if not ok then
+      return nil, "Failed to parse write output: " .. tostring(write_result)
+    end
+
+    return {
+      headers = {},
+      rows = {},
+      row_count = 0,
+      query_type = "write",
+      affected_rows = write_result.affected_rows,
+      matched_rows = write_result.matched_rows,
+      changed_rows = write_result.changed_rows,
+      warnings = write_result.warnings,
+    },
+      nil
   end
 
   local ok, parsed = pcall(adapter.parse_output, adapter, result.stdout or "")
@@ -107,6 +163,7 @@ function Query.execute_sync(adapter, query, opts)
     headers = headers,
     rows = rows,
     row_count = #rows,
+    query_type = "select",
   }, nil
 end
 

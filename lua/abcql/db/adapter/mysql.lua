@@ -44,6 +44,12 @@ function MySQLAdapter:get_args(query, opts)
 
   table.insert(args, "--batch")
 
+  if self:is_write_query(query) then
+    -- Use -vvv to force table output format even in batch mode
+    -- This ensures we get "Query OK, X rows affected" messages for write queries
+    table.insert(args, "-vvv")
+  end
+
   if opts.skip_column_names then
     table.insert(args, "--skip-column-names")
   end
@@ -64,6 +70,50 @@ function MySQLAdapter:execute_query(query, opts, callback)
   end
 
   return Query.execute_async(self, query, callback, opts)
+end
+
+--- Detect if a query is a write operation (INSERT, UPDATE, DELETE)
+--- @param query string The SQL query
+--- @return boolean True if the query is a write operation
+function MySQLAdapter:is_write_query(query)
+  local query_upper = query:upper():match("^%s*(%u+)")
+  return query_upper == "INSERT" or query_upper == "UPDATE" or query_upper == "DELETE"
+end
+
+--- Parse MySQL write query output to extract affected rows information
+--- @param raw string Raw output from mysql CLI for write queries
+--- @return table Result object with affected_rows, matched_rows, changed_rows, warnings
+function MySQLAdapter:parse_write_output(raw)
+  local result = {
+    affected_rows = 0,
+    matched_rows = 0,
+    changed_rows = 0,
+    warnings = 0,
+  }
+
+  -- Parse "Query OK, X rows affected" line
+  local affected = raw:match("(%d+)%s+rows?%s+affected")
+  if affected then
+    result.affected_rows = tonumber(affected) or 0
+  end
+
+  -- Parse "Rows matched: X  Changed: Y  Warnings: Z" line
+  local matched = raw:match("Rows matched:%s*(%d+)")
+  if matched then
+    result.matched_rows = tonumber(matched) or 0
+  end
+
+  local changed = raw:match("Changed:%s*(%d+)")
+  if changed then
+    result.changed_rows = tonumber(changed) or 0
+  end
+
+  local warnings = raw:match("Warnings:%s*(%d+)")
+  if warnings then
+    result.warnings = tonumber(warnings) or 0
+  end
+
+  return result
 end
 
 --- Parse MySQL tab-separated output into rows

@@ -372,6 +372,30 @@ function UI.display(results, results_title)
 
   local lines = {}
 
+  -- Handle write queries (INSERT, UPDATE, DELETE)
+  if results.query_type == "write" then
+    table.insert(lines, "")
+    table.insert(lines, " Query executed successfully")
+    table.insert(lines, "")
+    table.insert(lines, string.format(" Rows affected:  %-23d", results.affected_rows or 0))
+
+    -- Only show matched/changed rows for UPDATE queries (when they differ from affected)
+    if results.matched_rows and results.matched_rows > 0 then
+      table.insert(lines, string.format(" Rows matched:   %-23d", results.matched_rows))
+      table.insert(lines, string.format(" Rows changed:   %-23d", results.changed_rows or 0))
+    end
+
+    if results.warnings and results.warnings > 0 then
+      table.insert(lines, string.format(" Warnings:       %-23d", results.warnings))
+    end
+    table.insert(lines, "")
+
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.bo[buf].modifiable = false
+    return
+  end
+
+  -- Handle SELECT queries and other result sets
   if not results.headers or #results.headers == 0 then
     table.insert(lines, "No results")
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
