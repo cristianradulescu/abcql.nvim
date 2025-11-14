@@ -7,7 +7,7 @@ MySQLAdapter.__index = MySQLAdapter
 setmetatable(MySQLAdapter, { __index = Adapter })
 
 --- Create a new MySQL adapter instance
---- @param config table Connection configuration (host, port, user, database)
+--- @param config AdapterConfig Configuration parameters for the adapter
 --- @return table The adapter instance
 function MySQLAdapter.new(config)
   local self = Adapter.new(config)

@@ -8,7 +8,6 @@ local M = {}
 ---@param opts? abcql.Config
 function M.setup(opts)
   require("abcql.config").setup(opts)
-  vim.notify("abcql.nvim is set up", vim.log.levels.INFO)
 end
 
 return M

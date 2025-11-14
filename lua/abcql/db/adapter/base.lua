@@ -1,27 +1,20 @@
+---@alias AdapterConfig { host?: string, port?: number, user?: string, password?: string, database?: string, options?: table<string, string> }
+
 ---@class abcql.db.adapter.Adapter
----@field config table Connection configuration
+---@field config {}
 ---@field get_command fun(self: abcql.db.adapter.Adapter): string
 ---@field get_args fun(self: abcql.db.adapter.Adapter, query: string, opts: table|nil): table
 ---@field parse_output fun(self: abcql.db.adapter.Adapter, raw: string): table
 ---@field get_databases fun(self: abcql.db.adapter.Adapter, callback: fun(databases: table, err: string|nil))
----@field get_tables fun(
----  self: abcql.db.adapter.Adapter,
----  database: string,
----  callback: fun(tables: table, err: string|nil)
----)
----@field get_columns fun(
----  self: abcql.db.adapter.Adapter,
----  database: string,
----  table_name: string,
----  callback: fun(columns: table, err: string|nil)
----)
+---@field get_tables fun(self: abcql.db.adapter.Adapter, database: string, callback: fun(tables: table, err: string|nil))
+---@field get_columns fun(self: abcql.db.adapter.Adapter, database: string, table_name: string, callback: fun(columns: table, err: string|nil))
 ---@field escape_identifier fun(self: abcql.db.adapter.Adapter, name: string): string
 ---@field escape_value fun(self: abcql.db.adapter.Adapter, value: string): string
 local Adapter = {}
 Adapter.__index = Adapter
 
 --- Create a new adapter instance
---- @param config table Connection configuration
+--- @param config AdapterConfig Configuration parameters for the adapter
 --- @return abcql.db.adapter.Adapter
 function Adapter.new(config)
   local self = setmetatable({}, Adapter)

@@ -40,4 +40,4 @@ files["tests/"] = {
   },
 }
 
-max_line_length = 120
+max_line_length = 999

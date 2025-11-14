@@ -16,8 +16,6 @@ local config = vim.deepcopy(defaults)
 
 ---@param opts? abcql.Config
 function M.setup(opts)
-  vim.notify("Setting up abcql config", vim.log.levels.INFO)
-
   config = vim.tbl_deep_extend("force", {}, vim.deepcopy(defaults), opts or {})
 
   -- Initialize connection registry with data sources

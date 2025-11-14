@@ -1,15 +1,7 @@
 ---@class abcql.db.Query
 local Query = {}
 
----@alias QueryResult {
---- headers: string[],
---- rows: table[],
---- row_count: number,
---- query_type: string?,
---- affected_rows: number?,
---- matched_rows: number?,
---- changed_rows: number?,
---- warnings: number? }
+---@alias QueryResult { headers: string[], rows: table[], row_count: number, query_type: string?, affected_rows: number?, matched_rows: number?, changed_rows: number?, warnings: number? }
 
 --- Execute a query asynchronously using vim.system
 --- @param adapter abcql.db.adapter.Adapter The database adapter
