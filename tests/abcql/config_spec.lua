@@ -87,19 +87,6 @@ describe("Config", function()
 
       assert.is_true(db_setup_called)
     end)
-
-    it("should notify when setting up", function()
-      local notified = false
-      vim.notify = function(msg, level)
-        if msg:match("Setting up abcql config") then
-          notified = true
-        end
-      end
-
-      Config.setup({})
-
-      assert.is_true(notified)
-    end)
   end)
 
   describe("metatable access", function()

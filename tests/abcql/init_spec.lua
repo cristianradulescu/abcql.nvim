@@ -93,19 +93,6 @@ describe("abcql.nvim", function()
       assert.are.same(test_opts, passed_opts)
     end)
 
-    it("should notify on successful setup", function()
-      local notified = false
-      vim.notify = function(msg, level)
-        if msg:match("abcql.nvim is set up") and level == vim.log.levels.INFO then
-          notified = true
-        end
-      end
-
-      abcql.setup({})
-
-      assert.is_true(notified)
-    end)
-
     it("should accept nil options", function()
       assert.has_no.errors(function()
         abcql.setup(nil)

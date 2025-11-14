@@ -1,7 +1,7 @@
 ---@class abcql.db.Query
 local Query = {}
 
----@alias QueryResult { headers: string[], rows: table[], row_count: number, query_type: string?, affected_rows: number?, matched_rows: number?, changed_rows: number?, warnings: number? }
+---@alias QueryResult { headers: string[], rows: table[], row_count: number, query_type: string?, affected_rows: number?, matched_rows: number?, changed_rows: number?, warnings: number?, duration_ms: number? }
 
 --- Execute a query asynchronously using vim.system
 --- @param adapter abcql.db.adapter.Adapter The database adapter
@@ -18,12 +18,17 @@ function Query.execute_async(adapter, query, callback, opts)
   -- Detect if this is a write query
   local is_write = adapter.is_write_query and adapter:is_write_query(query) or false
 
+  -- Record start time
+  local start_time = vim.loop.hrtime()
+
   -- Execute command asynchronously
   vim.system({ cmd, unpack(args) }, {
     text = true,
     timeout = opts.timeout or 30000, -- 30 second default timeout
   }, function(result)
     vim.schedule(function()
+      -- Calculate execution time in milliseconds
+      local duration_ms = (vim.loop.hrtime() - start_time) / 1000000
       -- Check for execution errors
       if result.code ~= 0 then
         local error_msg = result.stderr or "Command failed with exit code " .. result.code
@@ -48,6 +53,7 @@ function Query.execute_async(adapter, query, callback, opts)
           matched_rows = write_result.matched_rows,
           changed_rows = write_result.changed_rows,
           warnings = write_result.warnings,
+          duration_ms = duration_ms,
         }, nil)
         return
       end
@@ -79,6 +85,7 @@ function Query.execute_async(adapter, query, callback, opts)
         rows = rows,
         row_count = #rows,
         query_type = "select",
+        duration_ms = duration_ms,
       }, nil)
     end)
   end)
@@ -99,6 +106,9 @@ function Query.execute_sync(adapter, query, opts)
   -- Detect if this is a write query
   local is_write = adapter.is_write_query and adapter:is_write_query(query) or false
 
+  -- Record start time
+  local start_time = vim.loop.hrtime()
+
   -- Execute synchronously
   local result = vim
     .system({ cmd, unpack(args) }, {
@@ -106,6 +116,9 @@ function Query.execute_sync(adapter, query, opts)
       timeout = opts.timeout or 30000,
     })
     :wait()
+
+  -- Calculate execution time in milliseconds
+  local duration_ms = (vim.loop.hrtime() - start_time) / 1000000
 
   if result.code ~= 0 then
     local error_msg = result.stderr or "Command failed with exit code " .. result.code
@@ -128,6 +141,7 @@ function Query.execute_sync(adapter, query, opts)
       matched_rows = write_result.matched_rows,
       changed_rows = write_result.changed_rows,
       warnings = write_result.warnings,
+      duration_ms = duration_ms,
     },
       nil
   end
@@ -156,7 +170,9 @@ function Query.execute_sync(adapter, query, opts)
     rows = rows,
     row_count = #rows,
     query_type = "select",
-  }, nil
+    duration_ms = duration_ms,
+  },
+    nil
 end
 
 --- Extract the SQL query at the cursor position based on semicolon delimiters

@@ -355,6 +355,17 @@ function UI.toggle_tree()
   end
 end
 
+--- Format duration in milliseconds to a human-readable string
+--- @param duration_ms number Duration in milliseconds
+--- @return string Formatted duration (e.g., "1.23s", "456ms")
+local function format_duration(duration_ms)
+  if duration_ms >= 1000 then
+    return string.format("%.2fs", duration_ms / 1000)
+  else
+    return string.format("%dms", math.floor(duration_ms))
+  end
+end
+
 --- Display query results or errors in the results buffer
 --- @param results QueryResult|string Results object with columns, rows, and optional metadata, or error message string
 --- @param results_title string? Optional title for the results buffer
@@ -427,6 +438,10 @@ function UI.display(results, results_title)
     if results.warnings and results.warnings > 0 then
       table.insert(lines, string.format(" Warnings:       %-23d", results.warnings))
     end
+
+    if results.duration_ms then
+      table.insert(lines, string.format(" Time: %-23s", format_duration(results.duration_ms)))
+    end
     table.insert(lines, "")
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
@@ -464,6 +479,10 @@ function UI.display(results, results_title)
 
   local row_count = format.format_row_count(#rows)
   table.insert(lines, string.format(" %s ", row_count))
+
+  if results.duration_ms then
+    table.insert(lines, string.format(" Execution time: %s ", format_duration(results.duration_ms)))
+  end
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
