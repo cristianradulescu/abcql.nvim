@@ -42,3 +42,27 @@ vim.api.nvim_create_user_command("AbcqlToggleTree", function()
 end, {
   desc = "Toggle visibility of the ABCQL data source tree panel",
 })
+
+--- Export current query results to CSV format
+--- Saves to current working directory with timestamp
+vim.api.nvim_create_user_command("AbcqlExportCsv", function()
+  require("abcql.export").export_current("csv")
+end, {
+  desc = "Export current query results to CSV file",
+})
+
+--- Export current query results to TSV format
+--- Saves to current working directory with timestamp
+vim.api.nvim_create_user_command("AbcqlExportTsv", function()
+  require("abcql.export").export_current("tsv")
+end, {
+  desc = "Export current query results to TSV file",
+})
+
+--- Export current query results to JSON format
+--- Saves to current working directory with timestamp (requires jq)
+vim.api.nvim_create_user_command("AbcqlExportJson", function()
+  require("abcql.export").export_current("json")
+end, {
+  desc = "Export current query results to JSON file",
+})

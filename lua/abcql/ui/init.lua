@@ -20,6 +20,9 @@ local state = {
   -- editor is always visible when UI is open
   results_visible = false,
   data_source_tree_visible = false,
+
+  -- Current query results (for export functionality)
+  current_results = nil,
 }
 
 --- Create the query editor buffer
@@ -383,6 +386,13 @@ function UI.display(results, results_title)
 
   local lines = {}
 
+  -- Store current results for export (only if not an error string)
+  if type(results) == "table" then
+    state.current_results = results
+  else
+    state.current_results = nil
+  end
+
   -- Handle error messages (when results is a string)
   if type(results) == "string" then
     table.insert(lines, "")
@@ -486,6 +496,12 @@ function UI.display(results, results_title)
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
+end
+
+--- Get the current query results (for export functionality)
+--- @return QueryResult|nil The current results, or nil if none available
+function UI.get_current_results()
+  return state.current_results
 end
 
 return UI
