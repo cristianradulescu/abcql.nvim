@@ -264,7 +264,8 @@ function Query.execute_query_at_cursor()
       local active_datasource = require("abcql.db").get_active_datasource(vim.api.nvim_get_current_buf())
       Query.execute_async(active_datasource.adapter, query_at_cursor, function(results, err)
         if err then
-          vim.notify("Query execution failed: " .. err, vim.log.levels.ERROR)
+          -- Display error in results pane instead of notification
+          require("abcql.ui").display(err)
           return
         end
 

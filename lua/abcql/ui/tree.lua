@@ -365,7 +365,9 @@ function Tree.browse_table_data(node, callback)
   local Query = require("abcql.db.query")
   Query.execute_async(datasource.adapter, query, function(results, err)
     if err then
-      vim.notify("Error browsing table: " .. err, vim.log.levels.ERROR)
+      -- Display error in results pane instead of notification
+      local UI = require("abcql.ui")
+      UI.display(err, "Table: " .. table_name)
       if callback then
         callback(false)
       end

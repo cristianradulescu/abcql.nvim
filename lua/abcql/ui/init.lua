@@ -355,8 +355,8 @@ function UI.toggle_tree()
   end
 end
 
---- Display query results in the results buffer
---- @param results QueryResult Results object with columns, rows, and optional metadata (duration_ms)
+--- Display query results or errors in the results buffer
+--- @param results QueryResult|string Results object with columns, rows, and optional metadata, or error message string
 --- @param results_title string? Optional title for the results buffer
 function UI.display(results, results_title)
   local buf = state.results_buf
@@ -371,6 +371,45 @@ function UI.display(results, results_title)
   vim.bo[buf].modifiable = true
 
   local lines = {}
+
+  -- Handle error messages (when results is a string)
+  if type(results) == "string" then
+    table.insert(lines, "")
+    table.insert(lines, " ✖ Query execution failed")
+    table.insert(lines, "")
+
+    -- Split error message into lines and wrap long lines
+    local error_lines = vim.split(results, "\n")
+    for _, line in ipairs(error_lines) do
+      -- Word wrap long lines to fit within a reasonable width
+      local max_width = 80
+      if #line <= max_width then
+        table.insert(lines, " " .. line)
+      else
+        -- Simple word wrapping
+        local current_line = ""
+        for word in line:gmatch("%S+") do
+          if #current_line + #word + 1 <= max_width then
+            current_line = current_line .. (current_line == "" and "" or " ") .. word
+          else
+            if current_line ~= "" then
+              table.insert(lines, " " .. current_line)
+            end
+            current_line = word
+          end
+        end
+        if current_line ~= "" then
+          table.insert(lines, " " .. current_line)
+        end
+      end
+    end
+
+    table.insert(lines, "")
+
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.bo[buf].modifiable = false
+    return
+  end
 
   -- Handle write queries (INSERT, UPDATE, DELETE)
   if results.query_type == "write" then
