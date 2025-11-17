@@ -15,6 +15,7 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
 - Interactive query execution with results in split windows  
 - Schema and table explorer
 - Export query results to CSV, TSV, and JSON formats
+- SQL completion with LSP support (databases, tables, columns, keywords)
 
 ---
 
@@ -54,6 +55,21 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
 ---
 
 ## Usage
+
+### SQL Completion (LSP)
+
+`abcql.nvim` includes built-in Language Server Protocol (LSP) support for SQL completion. The LSP automatically starts when you activate a datasource and provides intelligent completions for:
+
+- Database names (after `USE` keyword or as table qualifiers)
+- Table names (after `FROM`, `JOIN`, etc.)
+- Column names (in `SELECT`, `WHERE`, `ORDER BY`, etc.)
+- SQL keywords
+
+For more details on LSP configuration and features, see [docs/lsp.md](docs/lsp.md).
+
+#### LSP Commands
+
+- `:AbcqlRefreshSchema` - Reload schema cache for the current buffer's datasource
 
 ### Exporting Query Results
 

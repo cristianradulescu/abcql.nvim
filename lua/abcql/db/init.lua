@@ -1,4 +1,5 @@
 local ConnectionRegistry = require("abcql.db.connection.registry")
+local LSP = require("abcql.lsp")
 
 ---@class abcql.Database
 local Database = {
@@ -48,6 +49,13 @@ function Database.activate_datasource(bufnr)
       )
 
       vim.notify("Connected to data source: " .. datasource_name, vim.log.levels.INFO)
+
+      -- Start LSP for this buffer
+      LSP.start(bufnr, datasource, function(lsp_err)
+        if lsp_err then
+          vim.notify("Failed to start LSP: " .. lsp_err, vim.log.levels.ERROR)
+        end
+      end)
     end
   )
 end

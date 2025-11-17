@@ -66,3 +66,25 @@ vim.api.nvim_create_user_command("AbcqlExportJson", function()
 end, {
   desc = "Export current query results to JSON file",
 })
+
+--- Refresh LSP schema cache for the current buffer's datasource
+--- Reloads databases, tables, and columns for SQL completion
+vim.api.nvim_create_user_command("AbcqlRefreshSchema", function()
+  local bufnr = vim.api.nvim_get_current_buf()
+  local Database = require("abcql.db")
+  local datasource = Database.get_active_datasource(bufnr)
+
+  if not datasource then
+    vim.notify("No active datasource for this buffer", vim.log.levels.WARN)
+    return
+  end
+
+  local LSP = require("abcql.lsp")
+  LSP.refresh_schema(datasource.name, datasource.adapter, function(err)
+    if err then
+      vim.notify("Failed to refresh schema: " .. err, vim.log.levels.ERROR)
+    end
+  end)
+end, {
+  desc = "Refresh LSP schema cache for SQL completion",
+})
