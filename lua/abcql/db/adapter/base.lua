@@ -72,6 +72,22 @@ function Adapter:get_columns(database, table_name, callback)
   error("get_columns must be implemented by adapter")
 end
 
+--- Fetch constraints for a table asynchronously
+--- @param database string Database name
+--- @param table_name string Table name
+--- @param callback function Called with (constraints, error) where constraints is { primary_key: string[], foreign_keys: {column, ref_table, ref_column}[] }
+function Adapter:get_constraints(database, table_name, callback)
+  error("get_constraints must be implemented by adapter")
+end
+
+--- Fetch indexes for a table asynchronously
+--- @param database string Database name
+--- @param table_name string Table name
+--- @param callback function Called with (indexes, error) where indexes is array of { name: string, columns: string[], unique: boolean }
+function Adapter:get_indexes(database, table_name, callback)
+  error("get_indexes must be implemented by adapter")
+end
+
 --- Escape a database identifier (table name, column name, etc.)
 --- @param name string The identifier to escape
 --- @return string The escaped identifier

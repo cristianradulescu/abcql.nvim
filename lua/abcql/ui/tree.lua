@@ -1,10 +1,10 @@
 ---@class TreeNode
----@field type "title"|"datasource"|"database"|"table"|"column"
+---@field type "title"|"datasource"|"database"|"table"|"column"|"constraints_folder"|"constraint"|"indexes_folder"|"index"
 ---@field name string Display name of the node
 ---@field level number Indentation level (0 for datasource, 1 for database, etc.)
 ---@field expanded boolean Whether the node is currently expanded
 ---@field children TreeNode[]|nil Child nodes (nil until first expansion)
----@field metadata table Additional context (datasource, database_name, table_name, column_type, etc.)
+---@field metadata table Additional context (datasource, database_name, table_name, column_type, constraint_type, etc.)
 
 ---@class abcql.ui.Tree
 local Tree = {}
@@ -19,13 +19,18 @@ local ICONS = {
   collapsed = "󰅂",
   leaf = "•",
   datasource = "󰒍",
-  database = "",
-  table = "",
-  column = "",
+  database = "󰆼",
+  table = "󰓫",
+  column = "󰠵",
+  constraints = "󰌆",
+  primary_key = "󰌆",
+  foreign_key = "󰿡",
+  indexes = "󰗅",
+  index = "󰗅",
 }
 
 --- Create a new tree node
---- @param type "title"|"datasource"|"database"|"table"|"column" Node type
+--- @param type "title"|"datasource"|"database"|"table"|"column"|"constraints_folder"|"constraint"|"indexes_folder"|"index" Node type
 --- @param name string Display name
 --- @param level number Indentation level (0 = datasource, 1 = database, 2 = table, 3 = column)
 --- @param metadata table Additional node context
@@ -86,6 +91,14 @@ local function format_node_line(node)
 
   if node.type == "column" then
     icon = ICONS.column
+  elseif node.type == "constraint" then
+    if node.metadata.constraint_type == "primary_key" then
+      icon = ICONS.primary_key
+    else
+      icon = ICONS.foreign_key
+    end
+  elseif node.type == "index" then
+    icon = ICONS.index
   elseif node.expanded then
     icon = ICONS.expanded
   else
@@ -98,6 +111,10 @@ local function format_node_line(node)
     icon = icon .. " " .. ICONS.database
   elseif node.type == "table" then
     icon = icon .. " " .. ICONS.table
+  elseif node.type == "constraints_folder" then
+    icon = icon .. " " .. ICONS.constraints
+  elseif node.type == "indexes_folder" then
+    icon = icon .. " " .. ICONS.indexes
   end
 
   local display_name = node.name
@@ -153,14 +170,14 @@ end
 
 --- Toggle a node's expanded state or lazy-load its children
 --- Behavior:
---- - Columns cannot be expanded (no-op)
+--- - Columns, constraints, and indexes cannot be expanded (no-op)
 --- - If expanded: collapse the node
 --- - If collapsed with children already loaded: expand the node
 --- - If collapsed without children: trigger async load, then expand on success
 --- @param node TreeNode Node to toggle
 --- @param callback function|nil Called after toggle completes (for UI refresh)
 function Tree.toggle_node(node, callback)
-  if node.type == "column" then
+  if node.type == "column" or node.type == "constraint" or node.type == "index" then
     return
   end
 
@@ -200,6 +217,24 @@ function Tree.toggle_node(node, callback)
     end)
   elseif node.type == "table" then
     Tree.load_columns(node, function(success)
+      if success then
+        node.expanded = true
+      end
+      if callback then
+        callback()
+      end
+    end)
+  elseif node.type == "constraints_folder" then
+    Tree.load_constraints(node, function(success)
+      if success then
+        node.expanded = true
+      end
+      if callback then
+        callback()
+      end
+    end)
+  elseif node.type == "indexes_folder" then
+    Tree.load_indexes(node, function(success)
       if success then
         node.expanded = true
       end
@@ -289,6 +324,7 @@ end
 
 --- Asynchronously load columns for a table node
 --- Creates child nodes for each column with type information
+--- Also adds a Constraints folder node at the end
 --- @param table_node TreeNode Table node to load children for
 --- @param callback fun(success: boolean) Called with true on success, false on error
 function Tree.load_columns(table_node, callback)
@@ -319,6 +355,108 @@ function Tree.load_columns(table_node, callback)
         column_type = column.type,
       })
       table.insert(table_node.children, col_node)
+    end
+
+    -- Add Constraints folder node at the end
+    local constraints_node = create_node("constraints_folder", "Constraints", table_node.level + 1, {
+      datasource_name = table_node.metadata.datasource_name,
+      datasource = datasource,
+      database_name = database_name,
+      table_name = table_name,
+    })
+    table.insert(table_node.children, constraints_node)
+
+    -- Add Indexes folder node at the end
+    local indexes_node = create_node("indexes_folder", "Indexes", table_node.level + 1, {
+      datasource_name = table_node.metadata.datasource_name,
+      datasource = datasource,
+      database_name = database_name,
+      table_name = table_name,
+    })
+    table.insert(table_node.children, indexes_node)
+
+    callback(true)
+  end)
+end
+
+--- Asynchronously load constraints for a constraints folder node
+--- Creates child nodes for primary key and foreign key constraints
+--- @param constraints_node TreeNode Constraints folder node to load children for
+--- @param callback fun(success: boolean) Called with true on success, false on error
+function Tree.load_constraints(constraints_node, callback)
+  local datasource = constraints_node.metadata.datasource
+  local database_name = constraints_node.metadata.database_name
+  local table_name = constraints_node.metadata.table_name
+
+  if not datasource or not datasource.adapter then
+    vim.notify("No adapter for constraints: " .. constraints_node.name, vim.log.levels.ERROR)
+    callback(false)
+    return
+  end
+
+  datasource.adapter:get_constraints(database_name, table_name, function(constraints, err)
+    if err then
+      vim.notify("Error loading constraints: " .. err, vim.log.levels.ERROR)
+      callback(false)
+      return
+    end
+
+    constraints_node.children = {}
+
+    -- Add primary key node if exists
+    if constraints.primary_key and #constraints.primary_key > 0 then
+      local pk_text = "PK: " .. table.concat(constraints.primary_key, ", ")
+      local pk_node = create_node("constraint", pk_text, constraints_node.level + 1, {
+        constraint_type = "primary_key",
+      })
+      table.insert(constraints_node.children, pk_node)
+    end
+
+    -- Add foreign key nodes
+    for _, fk in ipairs(constraints.foreign_keys or {}) do
+      local fk_text = string.format("FK: %s → %s.%s", fk.column, fk.ref_table, fk.ref_column)
+      local fk_node = create_node("constraint", fk_text, constraints_node.level + 1, {
+        constraint_type = "foreign_key",
+      })
+      table.insert(constraints_node.children, fk_node)
+    end
+
+    callback(true)
+  end)
+end
+
+--- Asynchronously load indexes for an indexes folder node
+--- Creates child nodes for each index with column information
+--- @param indexes_node TreeNode Indexes folder node to load children for
+--- @param callback fun(success: boolean) Called with true on success, false on error
+function Tree.load_indexes(indexes_node, callback)
+  local datasource = indexes_node.metadata.datasource
+  local database_name = indexes_node.metadata.database_name
+  local table_name = indexes_node.metadata.table_name
+
+  if not datasource or not datasource.adapter then
+    vim.notify("No adapter for indexes: " .. indexes_node.name, vim.log.levels.ERROR)
+    callback(false)
+    return
+  end
+
+  datasource.adapter:get_indexes(database_name, table_name, function(indexes, err)
+    if err then
+      vim.notify("Error loading indexes: " .. err, vim.log.levels.ERROR)
+      callback(false)
+      return
+    end
+
+    indexes_node.children = {}
+
+    for _, idx in ipairs(indexes or {}) do
+      local unique_marker = idx.unique and "UNIQUE " or ""
+      local idx_text = string.format("%s%s (%s)", unique_marker, idx.name, table.concat(idx.columns, ", "))
+      local idx_node = create_node("index", idx_text, indexes_node.level + 1, {
+        index_name = idx.name,
+        unique = idx.unique,
+      })
+      table.insert(indexes_node.children, idx_node)
     end
 
     callback(true)

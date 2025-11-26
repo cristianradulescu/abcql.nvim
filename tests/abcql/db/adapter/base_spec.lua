@@ -67,6 +67,18 @@ describe("BaseAdapter", function()
         adapter:get_columns("mydb", "mytable", function() end)
       end, "get_columns must be implemented by adapter")
     end)
+
+    it("get_constraints should throw error", function()
+      assert.has_error(function()
+        adapter:get_constraints("mydb", "mytable", function() end)
+      end, "get_constraints must be implemented by adapter")
+    end)
+
+    it("get_indexes should throw error", function()
+      assert.has_error(function()
+        adapter:get_indexes("mydb", "mytable", function() end)
+      end, "get_indexes must be implemented by adapter")
+    end)
   end)
 
   describe("default implementations", function()

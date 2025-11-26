@@ -211,7 +211,7 @@ function UI.open(opts)
   vim.cmd("vertical rightbelow split")
   state.datasource_tree_win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(state.datasource_tree_win, state.datasource_tree_buf)
-  vim.api.nvim_win_set_width(state.datasource_tree_win, 30)
+  vim.api.nvim_win_set_width(state.datasource_tree_win, 50)
   datasource_win_opts(state.datasource_tree_win)
 
   -- Go back to the editor window and create horizontal split below for results

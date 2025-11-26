@@ -207,6 +207,115 @@ function MySQLAdapter:get_columns(database, table_name, callback)
   end, { skip_column_names = true })
 end
 
+--- Fetch constraints for a table asynchronously
+--- @param database string Database name
+--- @param table_name string Table name
+--- @param callback function Called with (constraints, error) where constraints is { primary_key: string[], foreign_keys: {column, ref_table, ref_column}[] }
+function MySQLAdapter:get_constraints(database, table_name, callback)
+  local query = string.format(
+    [[SELECT
+      kcu.COLUMN_NAME,
+      tc.CONSTRAINT_TYPE,
+      kcu.REFERENCED_TABLE_NAME,
+      kcu.REFERENCED_COLUMN_NAME
+    FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+    JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+      ON kcu.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+      AND kcu.TABLE_SCHEMA = tc.TABLE_SCHEMA
+      AND kcu.TABLE_NAME = tc.TABLE_NAME
+    WHERE kcu.TABLE_SCHEMA='%s' AND kcu.TABLE_NAME='%s'
+    ORDER BY tc.CONSTRAINT_TYPE, kcu.ORDINAL_POSITION]],
+    self:escape_value(database),
+    self:escape_value(table_name)
+  )
+
+  Query.execute_async(self, query, function(result, err)
+    if err then
+      callback(nil, err)
+      return
+    end
+
+    local constraints = {
+      primary_key = {},
+      foreign_keys = {},
+    }
+
+    for _, row in ipairs(result.rows) do
+      local column_name = row[1]
+      local constraint_type = row[2]
+      local ref_table = row[3]
+      local ref_column = row[4]
+
+      if constraint_type == "PRIMARY KEY" then
+        table.insert(constraints.primary_key, column_name)
+      elseif constraint_type == "FOREIGN KEY" and ref_table and ref_column then
+        table.insert(constraints.foreign_keys, {
+          column = column_name,
+          ref_table = ref_table,
+          ref_column = ref_column,
+        })
+      end
+    end
+
+    callback(constraints, nil)
+  end, { skip_column_names = true })
+end
+
+--- Fetch indexes for a table asynchronously
+--- @param database string Database name
+--- @param table_name string Table name
+--- @param callback function Called with (indexes, error) where indexes is array of { name: string, columns: string[], unique: boolean }
+function MySQLAdapter:get_indexes(database, table_name, callback)
+  local query = string.format(
+    [[SELECT
+      INDEX_NAME,
+      COLUMN_NAME,
+      NON_UNIQUE,
+      SEQ_IN_INDEX
+    FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA='%s' AND TABLE_NAME='%s'
+    ORDER BY INDEX_NAME, SEQ_IN_INDEX]],
+    self:escape_value(database),
+    self:escape_value(table_name)
+  )
+
+  Query.execute_async(self, query, function(result, err)
+    if err then
+      callback(nil, err)
+      return
+    end
+
+    -- Group columns by index name
+    local index_map = {}
+    local index_order = {}
+
+    for _, row in ipairs(result.rows) do
+      local index_name = row[1]
+      local column_name = row[2]
+      local non_unique = row[3]
+
+      if not index_map[index_name] then
+        index_map[index_name] = {
+          name = index_name,
+          columns = {},
+          unique = non_unique == "0",
+        }
+        table.insert(index_order, index_name)
+      end
+
+      table.insert(index_map[index_name].columns, column_name)
+    end
+
+    -- Convert to array preserving order
+    local indexes = {}
+    for _, name in ipairs(index_order) do
+      table.insert(indexes, index_map[name])
+    end
+
+    callback(indexes, nil)
+  end, { skip_column_names = true })
+end
+
 --- Escape a MySQL identifier using backticks
 --- @param name string The identifier to escape
 --- @return string The escaped identifier with backticks

@@ -145,10 +145,12 @@ function Parser.is_after_table_keyword(text)
   local upper_text = text:upper()
   for _, keyword in ipairs(TABLE_KEYWORDS) do
     -- Match: <keyword> <word> OR <keyword>$ (ends with keyword)
-    if upper_text:match("%s" .. keyword .. "%s+[%w_]*$") 
+    if
+      upper_text:match("%s" .. keyword .. "%s+[%w_]*$")
       or upper_text:match("^" .. keyword .. "%s+[%w_]*$")
       or upper_text:match("%s" .. keyword .. "$")
-      or upper_text:match("^" .. keyword .. "$") then
+      or upper_text:match("^" .. keyword .. "$")
+    then
       return true
     end
   end
@@ -304,12 +306,49 @@ end
 ---@return boolean True if word is a SQL keyword
 function Parser.is_sql_keyword(word)
   local keywords = {
-    "WHERE", "AND", "OR", "ON", "USING", "GROUP", "ORDER", "HAVING",
-    "LIMIT", "OFFSET", "UNION", "INTERSECT", "EXCEPT", "SELECT",
-    "FROM", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "CROSS", "FULL",
-    "AS", "IN", "EXISTS", "BETWEEN", "LIKE", "IS", "NULL", "NOT",
-    "SET", "VALUES", "INTO", "UPDATE", "INSERT", "DELETE", "CREATE",
-    "ALTER", "DROP", "TABLE", "DATABASE", "INDEX", "VIEW",
+    "WHERE",
+    "AND",
+    "OR",
+    "ON",
+    "USING",
+    "GROUP",
+    "ORDER",
+    "HAVING",
+    "LIMIT",
+    "OFFSET",
+    "UNION",
+    "INTERSECT",
+    "EXCEPT",
+    "SELECT",
+    "FROM",
+    "JOIN",
+    "LEFT",
+    "RIGHT",
+    "INNER",
+    "OUTER",
+    "CROSS",
+    "FULL",
+    "AS",
+    "IN",
+    "EXISTS",
+    "BETWEEN",
+    "LIKE",
+    "IS",
+    "NULL",
+    "NOT",
+    "SET",
+    "VALUES",
+    "INTO",
+    "UPDATE",
+    "INSERT",
+    "DELETE",
+    "CREATE",
+    "ALTER",
+    "DROP",
+    "TABLE",
+    "DATABASE",
+    "INDEX",
+    "VIEW",
   }
   for _, kw in ipairs(keywords) do
     if word == kw then

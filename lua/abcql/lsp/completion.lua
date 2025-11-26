@@ -3,14 +3,59 @@ local Completion = {}
 
 --- Common SQL keywords
 local SQL_KEYWORDS = {
-  "SELECT", "FROM", "WHERE", "JOIN", "LEFT JOIN", "RIGHT JOIN",
-  "INNER JOIN", "OUTER JOIN", "ON", "AND", "OR", "NOT", "IN",
-  "EXISTS", "BETWEEN", "LIKE", "IS", "NULL", "ORDER BY", "GROUP BY",
-  "HAVING", "LIMIT", "OFFSET", "INSERT", "INTO", "VALUES", "UPDATE",
-  "SET", "DELETE", "CREATE", "ALTER", "DROP", "TABLE", "DATABASE",
-  "INDEX", "VIEW", "AS", "DISTINCT", "COUNT", "SUM", "AVG", "MAX",
-  "MIN", "CASE", "WHEN", "THEN", "ELSE", "END", "UNION", "ALL",
-  "ASC", "DESC", "USE"
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "JOIN",
+  "LEFT JOIN",
+  "RIGHT JOIN",
+  "INNER JOIN",
+  "OUTER JOIN",
+  "ON",
+  "AND",
+  "OR",
+  "NOT",
+  "IN",
+  "EXISTS",
+  "BETWEEN",
+  "LIKE",
+  "IS",
+  "NULL",
+  "ORDER BY",
+  "GROUP BY",
+  "HAVING",
+  "LIMIT",
+  "OFFSET",
+  "INSERT",
+  "INTO",
+  "VALUES",
+  "UPDATE",
+  "SET",
+  "DELETE",
+  "CREATE",
+  "ALTER",
+  "DROP",
+  "TABLE",
+  "DATABASE",
+  "INDEX",
+  "VIEW",
+  "AS",
+  "DISTINCT",
+  "COUNT",
+  "SUM",
+  "AVG",
+  "MAX",
+  "MIN",
+  "CASE",
+  "WHEN",
+  "THEN",
+  "ELSE",
+  "END",
+  "UNION",
+  "ALL",
+  "ASC",
+  "DESC",
+  "USE",
 }
 
 --- LSP completion item kinds
@@ -235,7 +280,7 @@ function Completion.create_columns_from_tables(cache, datasource_name, table_nam
         -- Only add if we haven't seen this column name yet
         if not seen[col.name] then
           seen[col.name] = true
-          local col_items = Completion.create_column_items({col}, partial, table_name)
+          local col_items = Completion.create_column_items({ col }, partial, table_name)
           vim.list_extend(items, col_items)
         end
       end
