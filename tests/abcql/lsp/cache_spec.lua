@@ -47,6 +47,9 @@ describe("Cache", function()
         get_databases = function(_, callback)
           callback({ "db1", "db2" }, nil)
         end,
+        get_tables = function(_, _, callback)
+          callback({}, nil)
+        end,
       }
 
       cache:load_schema("test_ds", mock_adapter, function()

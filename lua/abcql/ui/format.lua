@@ -5,13 +5,32 @@ local M = {}
 --- @param max_len number Maximum length including ellipsis
 --- @return string The truncated string
 function M.truncate(str, max_len)
-  if #str <= max_len then
+  local display_width = vim.fn.strdisplaywidth(str)
+  if display_width <= max_len then
     return str
   end
   if max_len <= 3 then
     return string.rep(".", max_len)
   end
-  return str:sub(1, max_len - 3) .. "..."
+
+  -- Binary search for the right byte position to truncate at
+  local low, high = 1, #str
+  local best_pos = 1
+
+  while low <= high do
+    local mid = math.floor((low + high) / 2)
+    local substr = str:sub(1, mid)
+    local width = vim.fn.strdisplaywidth(substr)
+
+    if width <= max_len - 3 then
+      best_pos = mid
+      low = mid + 1
+    else
+      high = mid - 1
+    end
+  end
+
+  return str:sub(1, best_pos) .. "..."
 end
 
 --- Pad a string to the right with spaces
@@ -19,10 +38,11 @@ end
 --- @param len number Target length after padding
 --- @return string The padded string
 function M.pad_right(str, len)
-  if #str > len then
-    return str:sub(1, len)
+  local display_width = vim.fn.strdisplaywidth(str)
+  if display_width > len then
+    return M.truncate(str, len)
   end
-  return str .. string.rep(" ", len - #str)
+  return str .. string.rep(" ", len - display_width)
 end
 
 --- Format a duration in milliseconds for display
@@ -63,14 +83,14 @@ function M.calculate_column_widths(columns, rows, max_width)
   local widths = {}
 
   for i, col in ipairs(columns) do
-    widths[i] = #col
+    widths[i] = vim.fn.strdisplaywidth(col)
   end
 
   for _, row in ipairs(rows) do
     for i = 1, #widths do
       local cell = row[i]
       local cell_str = cell == nil and "NULL" or tostring(cell)
-      local cell_len = #cell_str
+      local cell_len = vim.fn.strdisplaywidth(cell_str)
       if cell_len > widths[i] then
         widths[i] = math.min(cell_len, max_width)
       end
@@ -90,7 +110,8 @@ function M.format_row(row, widths)
     local cell = row[i]
     local cell_str = cell == nil and "NULL" or tostring(cell)
     local width = widths[i]
-    if #cell_str > width then
+    local cell_width = vim.fn.strdisplaywidth(cell_str)
+    if cell_width > width then
       cell_str = M.truncate(cell_str, width)
     end
     table.insert(cells, M.pad_right(cell_str, width))

@@ -43,6 +43,7 @@ function MySQLAdapter:get_args(query, opts)
   end
 
   table.insert(args, "--batch")
+  table.insert(args, "--default-character-set=utf8mb4")
 
   if self:is_write_query(query) then
     -- Use -vvv to force table output format even in batch mode
