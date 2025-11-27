@@ -5,13 +5,14 @@
 `abcql.nvim` is a modern, DataGrip and DBeaver inspired database client built entirely for Neovim.  
 Run SQL queries, explore schemas, inspect results, and manage connections — all from your favorite editor.
 
+![Overview](./docs/abcql-overview.png)
+
 ---
 
 ## Features
 
 - Connect to MySQL databases via connection strings
 - Manage multiple datasources/environments
-- Syntax highlighting for SQL queries
 - Interactive query execution with results in split windows  
 - Schema and table explorer
 - Export query results to CSV, TSV, and JSON formats
@@ -30,14 +31,7 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
     "nvim-lua/plenary.nvim",
   },
   config = function()
-    require("abcql").setup({
-      datasources = {
-        bookstore_dev = "mysql://dbuser:dbpassword@localhost:3306/bookstore",
-        bookstore_test = "mysql://dbuser:dbpassword@test-srv:3306/bookstore",
-        bookstore_prod = "mysql://dbuser:dbpassword@prod-srv:3306/bookstore",
-        music_dev = "mysql://dbuser:dbpassword@localhost:3306/music",
-      },
-    })
+    require("abcql").setup()
 
     local abcql_ui = require("abcql.ui")
     vim.keymap.set({ "n" }, "<leader>SS", function() abcql_ui.open() end, { desc = "abcql open" })
@@ -54,6 +48,55 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
 
 ---
 
+## Configuration
+
+### Datasources
+
+Datasources can be configured in three ways, with the following priority (highest first):
+
+1. **Local config file** (`.abcql.lua` in current working directory) - project-specific
+2. **User config file** (`~/.config/nvim/abcql/datasources.lua`) - global defaults
+
+#### Using a Local Config File (Recommended)
+
+Create a `.abcql.lua` file in your project root:
+
+```lua
+-- .abcql.lua
+return {
+  datasources = {
+    dev = "mysql://user:password@localhost:3306/myapp_dev",
+    test = "mysql://user:password@localhost:3306/myapp_test",
+  },
+}
+```
+
+You can use `:AbcqlInitConfig` to generate a template file.
+
+> **Important:** Add `.abcql.lua` to your `.gitignore` to avoid committing credentials.
+
+#### Environment Variable Expansion
+
+DSN strings support environment variable expansion using `${VAR_NAME}` syntax:
+
+```lua
+return {
+  datasources = {
+    dev = "${DATABASE_URL}",
+    staging = "mysql://user:${DB_PASSWORD}@staging:3306/myapp",
+  },
+}
+```
+
+#### Datasource Commands
+
+- `:AbcqlInitConfig` - Create a template `.abcql.lua` in the current directory
+- `:AbcqlInitConfig user` - Create a template in the user config directory
+- `:AbcqlListDatasources` - Show all configured datasources with their source
+- `:AbcqlReloadDatasources` - Reload datasources from config files
+
+---
+
 ## Usage
 
 ### SQL Completion (LSP)
@@ -64,8 +107,6 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
 - Table names (after `FROM`, `JOIN`, etc.)
 - Column names (in `SELECT`, `WHERE`, `ORDER BY`, etc.)
 - SQL keywords
-
-For more details on LSP configuration and features, see [docs/lsp.md](docs/lsp.md).
 
 #### LSP Commands
 

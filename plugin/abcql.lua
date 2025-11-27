@@ -88,3 +88,74 @@ vim.api.nvim_create_user_command("AbcqlRefreshSchema", function()
 end, {
   desc = "Refresh LSP schema cache for SQL completion",
 })
+
+--- Initialize a local .abcql.lua config file in the current working directory
+vim.api.nvim_create_user_command("AbcqlInitConfig", function(opts)
+  local loader = require("abcql.config.loader")
+  local path, err
+
+  if opts.args == "user" then
+    path = loader.USER_DATASOURCES_PATH
+    local success
+    success, err = loader.init_user_config()
+    if success then
+      vim.notify("Created user config at: " .. path, vim.log.levels.INFO)
+      vim.cmd.edit(path)
+    end
+  else
+    path = loader.get_local_config_path()
+    local success
+    success, err = loader.init_local_config()
+    if success then
+      vim.notify("Created local config at: " .. path, vim.log.levels.INFO)
+      vim.cmd.edit(path)
+    end
+  end
+
+  if err then
+    vim.notify(err, vim.log.levels.WARN)
+  end
+end, {
+  desc = "Initialize abcql config file (.abcql.lua)",
+  nargs = "?",
+  complete = function()
+    return { "local", "user" }
+  end,
+})
+
+--- List all configured datasources with their source
+vim.api.nvim_create_user_command("AbcqlListDatasources", function()
+  local config = require("abcql.config")
+  local loaded = config.get_loaded_datasources()
+
+  if vim.tbl_isempty(loaded) then
+    vim.notify("No datasources configured", vim.log.levels.INFO)
+    return
+  end
+
+  local lines = { "Configured datasources:" }
+  local names = vim.tbl_keys(loaded)
+  table.sort(names)
+
+  for _, name in ipairs(names) do
+    local ds = loaded[name]
+    local source_info = ds.source
+    if ds.source_path then
+      source_info = source_info .. " (" .. ds.source_path .. ")"
+    end
+    -- Mask password in DSN for display
+    local display_dsn = ds.dsn:gsub("(://[^:]+:)[^@]+(@)", "%1****%2")
+    table.insert(lines, string.format("  %s: %s [%s]", name, display_dsn, source_info))
+  end
+
+  vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
+end, {
+  desc = "List all configured datasources",
+})
+
+--- Reload datasources from config files
+vim.api.nvim_create_user_command("AbcqlReloadDatasources", function()
+  require("abcql.config").reload_datasources()
+end, {
+  desc = "Reload datasources from config files",
+})
