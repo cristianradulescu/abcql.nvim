@@ -58,6 +58,9 @@ local function create_results_buffer()
   vim.api.nvim_buf_set_option(buf, "swapfile", false)
   vim.api.nvim_buf_set_option(buf, "modifiable", false) -- Results are read-only
 
+  -- Setup highlight groups
+  require("abcql.ui.highlights").setup()
+
   local win_options_callback = function(win)
     vim.api.nvim_set_option_value("wrap", false, { win = win, scope = "local" })
     vim.api.nvim_set_option_value("number", false, { win = win, scope = "local" })
@@ -429,6 +432,10 @@ function UI.display(results, results_title)
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
     vim.bo[buf].modifiable = false
+
+    -- Apply error highlights
+    local highlights = require("abcql.ui.highlights")
+    highlights.apply_error_highlights(buf, 0, #lines)
     return
   end
 
@@ -456,6 +463,10 @@ function UI.display(results, results_title)
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
     vim.bo[buf].modifiable = false
+
+    -- Apply write query highlights
+    local highlights = require("abcql.ui.highlights")
+    highlights.apply_write_highlights(buf, 0, #lines)
     return
   end
 
@@ -485,6 +496,9 @@ function UI.display(results, results_title)
     table.insert(lines, format.create_bottom_border(widths))
   end
 
+  -- Track where the table ends for footer highlighting
+  local table_end_line = #lines
+
   table.insert(lines, "")
 
   local row_count = format.format_row_count(#rows)
@@ -496,6 +510,15 @@ function UI.display(results, results_title)
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
+
+  -- Apply syntax highlighting
+  local highlights = require("abcql.ui.highlights")
+  highlights.apply_highlights(buf, results, 0, widths)
+
+  -- Highlight footer lines
+  for i = table_end_line + 1, #lines - 1 do
+    highlights.apply_footer_highlight(buf, i)
+  end
 end
 
 --- Get the current query results (for export functionality)
