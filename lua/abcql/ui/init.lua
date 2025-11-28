@@ -471,18 +471,18 @@ function UI.display(results, results_title)
   local rows = results.rows or {}
   local widths = format.calculate_column_widths(results.headers, rows)
 
-  table.insert(lines, format.create_separator(widths))
+  table.insert(lines, format.create_top_border(widths))
   table.insert(lines, format.format_row(results.headers, widths))
   table.insert(lines, format.create_separator(widths))
 
   if #rows == 0 then
-    table.insert(lines, " No rows returned ")
-    table.insert(lines, format.create_separator(widths))
+    table.insert(lines, format.border.vertical .. " No rows returned " .. string.rep(" ", math.max(0, vim.fn.strdisplaywidth(format.format_row(results.headers, widths)) - 20)) .. format.border.vertical)
+    table.insert(lines, format.create_bottom_border(widths))
   else
     for _, row in ipairs(rows) do
       table.insert(lines, format.format_row(row, widths))
     end
-    table.insert(lines, format.create_separator(widths))
+    table.insert(lines, format.create_bottom_border(widths))
   end
 
   table.insert(lines, "")

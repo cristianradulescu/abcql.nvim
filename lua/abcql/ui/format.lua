@@ -1,5 +1,25 @@
 local M = {}
 
+-- Box-drawing characters for table borders
+-- Using Unicode box-drawing block (U+2500-U+257F)
+M.border = {
+  -- Horizontal and vertical lines
+  horizontal = "─",
+  vertical = "│",
+  -- Corners
+  top_left = "┌",
+  top_right = "┐",
+  bottom_left = "└",
+  bottom_right = "┘",
+  -- T-junctions
+  top_tee = "┬",
+  bottom_tee = "┴",
+  left_tee = "├",
+  right_tee = "┤",
+  -- Cross
+  cross = "┼",
+}
+
 --- Truncate a string to a maximum length with ellipsis
 --- @param str string The string to truncate
 --- @param max_len number Maximum length including ellipsis
@@ -116,18 +136,40 @@ function M.format_row(row, widths)
     end
     table.insert(cells, M.pad_right(cell_str, width))
   end
-  return " " .. table.concat(cells, " | ") .. " "
+  return M.border.vertical .. " " .. table.concat(cells, " " .. M.border.vertical .. " ") .. " " .. M.border.vertical
 end
 
---- Create a separator line
+--- Create the top border line
+--- @param widths table Array of column widths
+--- @return string Top border line string
+function M.create_top_border(widths)
+  local parts = {}
+  for _, width in ipairs(widths) do
+    table.insert(parts, string.rep(M.border.horizontal, width + 2))
+  end
+  return M.border.top_left .. table.concat(parts, M.border.top_tee) .. M.border.top_right
+end
+
+--- Create a separator line between header and data rows
 --- @param widths table Array of column widths
 --- @return string Separator line string
 function M.create_separator(widths)
   local parts = {}
   for _, width in ipairs(widths) do
-    table.insert(parts, string.rep("-", width))
+    table.insert(parts, string.rep(M.border.horizontal, width + 2))
   end
-  return "-" .. table.concat(parts, "-+-") .. "-"
+  return M.border.left_tee .. table.concat(parts, M.border.cross) .. M.border.right_tee
+end
+
+--- Create the bottom border line
+--- @param widths table Array of column widths
+--- @return string Bottom border line string
+function M.create_bottom_border(widths)
+  local parts = {}
+  for _, width in ipairs(widths) do
+    table.insert(parts, string.rep(M.border.horizontal, width + 2))
+  end
+  return M.border.bottom_left .. table.concat(parts, M.border.bottom_tee) .. M.border.bottom_right
 end
 
 return M
