@@ -52,10 +52,7 @@ function M.expand_env_vars(str)
     if value then
       return value
     else
-      vim.notify(
-        string.format("abcql: Environment variable '%s' is not set", var_name),
-        vim.log.levels.WARN
-      )
+      vim.notify(string.format("abcql: Environment variable '%s' is not set", var_name), vim.log.levels.WARN)
       return "${" .. var_name .. "}"
     end
   end)

@@ -290,6 +290,91 @@ describe("MySQLAdapter", function()
       assert.are.equal(2, #rows_unix)
       assert.are.equal(2, #rows_windows)
     end)
+
+    it("should unescape newlines in field values", function()
+      -- MySQL batch mode escapes newlines as \n (backslash + n)
+      local raw = "id\tdescription\n1\tLine 1\\nLine 2\\nLine 3"
+      local rows = adapter:parse_output(raw)
+
+      assert.are.equal(2, #rows)
+      assert.are.equal("Line 1\nLine 2\nLine 3", rows[2][2])
+    end)
+
+    it("should unescape tabs in field values", function()
+      -- MySQL batch mode escapes tabs as \t (backslash + t)
+      local raw = "id\tdata\n1\tCol1\\tCol2\\tCol3"
+      local rows = adapter:parse_output(raw)
+
+      assert.are.equal(2, #rows)
+      assert.are.equal("Col1\tCol2\tCol3", rows[2][2])
+    end)
+
+    it("should unescape backslashes in field values", function()
+      -- MySQL batch mode escapes backslashes as \\ (double backslash)
+      local raw = "id\tpath\n1\tC:\\\\Users\\\\Admin"
+      local rows = adapter:parse_output(raw)
+
+      assert.are.equal(2, #rows)
+      assert.are.equal("C:\\Users\\Admin", rows[2][2])
+    end)
+
+    it("should unescape NULL bytes in field values", function()
+      -- MySQL batch mode escapes NULL bytes as \0
+      local raw = "id\tdata\n1\tbefore\\0after"
+      local rows = adapter:parse_output(raw)
+
+      assert.are.equal(2, #rows)
+      assert.are.equal("before\0after", rows[2][2])
+    end)
+
+    it("should handle complex mixed escape sequences", function()
+      -- A field with multiple escape sequences
+      local raw = "id\tcontent\n1\tFirst line\\nSecond line\\twith tab\\nThird\\\\backslash"
+      local rows = adapter:parse_output(raw)
+
+      assert.are.equal(2, #rows)
+      assert.are.equal("First line\nSecond line\twith tab\nThird\\backslash", rows[2][2])
+    end)
+
+    it("should handle multiline text content", function()
+      -- Simulating the job description content
+      local raw =
+        "id\tjob_description\n1\tWe are looking for a Senior Backend Engineer.\\n\\n    Key Responsibilities:\\n    - Design APIs\\n    - Optimize databases"
+      local rows = adapter:parse_output(raw)
+
+      assert.are.equal(2, #rows)
+      local expected =
+        "We are looking for a Senior Backend Engineer.\n\n    Key Responsibilities:\n    - Design APIs\n    - Optimize databases"
+      assert.are.equal(expected, rows[2][2])
+    end)
+
+    it("should preserve regular backslashes not followed by escape chars", function()
+      -- Backslash followed by a non-escape character should keep the backslash
+      local raw = "id\tdata\n1\ttest\\x value"
+      local rows = adapter:parse_output(raw)
+
+      assert.are.equal(2, #rows)
+      assert.are.equal("test\\x value", rows[2][2])
+    end)
+
+    it("should handle empty fields correctly", function()
+      local raw = "id\tname\temail\n1\t\ttest@example.com"
+      local rows = adapter:parse_output(raw)
+
+      assert.are.equal(2, #rows)
+      assert.are.equal("1", rows[2][1])
+      assert.are.equal("", rows[2][2])
+      assert.are.equal("test@example.com", rows[2][3])
+    end)
+
+    it("should handle trailing empty field", function()
+      local raw = "id\tname\temail\n1\tAlice\t"
+      local rows = adapter:parse_output(raw)
+
+      assert.are.equal(2, #rows)
+      assert.are.equal(3, #rows[2])
+      assert.are.equal("", rows[2][3])
+    end)
   end)
 
   describe("escape_identifier", function()

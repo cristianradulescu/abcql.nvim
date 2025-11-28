@@ -23,6 +23,9 @@ local state = {
 
   -- Current query results (for export functionality)
   current_results = nil,
+
+  -- Column widths for current results (for cell detection)
+  current_widths = nil,
 }
 
 --- Create the query editor buffer
@@ -71,6 +74,130 @@ local function create_results_buffer()
   end
 
   return buf, win_options_callback
+end
+
+--- Get the cell content at the current cursor position in the results buffer
+--- @return { row_idx: number, col_idx: number, header: string, value: any }|nil Cell info or nil if not on a data cell
+local function get_cell_at_cursor()
+  local results = state.current_results
+  local widths = state.current_widths
+
+  if not results or not widths or not results.headers or #results.headers == 0 then
+    return nil
+  end
+
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local line_num = cursor[1] -- 1-indexed
+  local col = cursor[2] -- 0-indexed byte position
+
+  -- Line 1: top border
+  -- Line 2: header row
+  -- Line 3: separator
+  -- Lines 4+: data rows
+  -- After data: bottom border, footer
+
+  local data_start_line = 4
+  local row_count = #(results.rows or {})
+  local data_end_line = data_start_line + row_count - 1
+
+  if line_num < data_start_line or line_num > data_end_line then
+    return nil -- Not on a data row
+  end
+
+  local row_idx = line_num - data_start_line + 1
+  local row = results.rows[row_idx]
+  if not row then
+    return nil
+  end
+
+  -- Calculate column positions based on the line content
+  -- Format: │ col1 │ col2 │ col3 │
+  -- Each │ is 3 bytes in UTF-8
+  local byte_pos = 0
+  local col_idx = nil
+
+  for i, width in ipairs(widths) do
+    -- Skip "│ " (4 bytes: 3 for │ + 1 for space)
+    local cell_start = byte_pos + 4
+    local cell_end = cell_start + width
+
+    if col >= cell_start and col < cell_end then
+      col_idx = i
+      break
+    end
+
+    -- Move past cell content and trailing space " "
+    byte_pos = cell_end + 1
+  end
+
+  if not col_idx then
+    return nil
+  end
+
+  return {
+    row_idx = row_idx,
+    col_idx = col_idx,
+    header = results.headers[col_idx],
+    value = row[col_idx],
+  }
+end
+
+--- Show a floating popup with the full cell content
+local function show_cell_popup()
+  local cell = get_cell_at_cursor()
+
+  if not cell then
+    vim.notify("No cell under cursor", vim.log.levels.INFO)
+    return
+  end
+
+  local value = cell.value
+  if value == nil then
+    value = "NULL"
+  else
+    value = tostring(value)
+  end
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  local lines = vim.split(value, "\n")
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+
+  local width = math.min(80, vim.o.columns - 10)
+  local height = math.min(20, vim.o.lines - 10)
+
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = "cursor",
+    row = 1,
+    col = 0,
+    width = width,
+    height = height,
+    style = "minimal",
+    border = "rounded",
+    title = " Content of `" .. cell.header .. "` ",
+    title_pos = "center",
+  })
+
+  vim.api.nvim_set_option_value("wrap", true, { win = win })
+  vim.api.nvim_set_option_value("linebreak", true, { win = win })
+
+  -- Close popup with q
+  vim.keymap.set("n", "q", function()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+    if vim.api.nvim_buf_is_valid(buf) then
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end
+  end, { buffer = buf })
+end
+
+--- Setup keymaps for the results buffer
+--- @param buf number Buffer ID
+local function setup_results_keymaps(buf)
+  vim.keymap.set("n", "]]", show_cell_popup, {
+    buffer = buf,
+    desc = "Show full cell content",
+  })
 end
 
 --- Create the data source tree buffer
@@ -194,6 +321,7 @@ function UI.open(opts)
   state.results_buf, results_win_opts = create_results_buffer()
   state.datasource_tree_buf, datasource_win_opts = create_data_source_tree_buffer()
 
+  setup_results_keymaps(state.results_buf)
   setup_tree_keymaps(state.datasource_tree_buf)
   refresh_datasource_tree()
 
@@ -491,12 +619,21 @@ function UI.display(results, results_title)
   local rows = results.rows or {}
   local widths = format.calculate_column_widths(results.headers, rows)
 
+  -- Store widths for cell detection (used by K keymap popup)
+  state.current_widths = widths
+
   table.insert(lines, format.create_top_border(widths))
   table.insert(lines, format.format_row(results.headers, widths))
   table.insert(lines, format.create_separator(widths))
 
   if #rows == 0 then
-    table.insert(lines, format.border.vertical .. " No rows returned " .. string.rep(" ", math.max(0, vim.fn.strdisplaywidth(format.format_row(results.headers, widths)) - 20)) .. format.border.vertical)
+    table.insert(
+      lines,
+      format.border.vertical
+        .. " No rows returned "
+        .. string.rep(" ", math.max(0, vim.fn.strdisplaywidth(format.format_row(results.headers, widths)) - 20))
+        .. format.border.vertical
+    )
     table.insert(lines, format.create_bottom_border(widths))
   else
     for _, row in ipairs(rows) do

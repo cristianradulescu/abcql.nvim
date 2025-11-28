@@ -117,15 +117,73 @@ function MySQLAdapter:parse_write_output(raw)
   return result
 end
 
+--- Unescape MySQL batch mode escape sequences in a field value
+--- MySQL batch mode escapes special characters as: \n \t \\ \0
+--- @param field string The escaped field value
+--- @return string The unescaped field value
+local function unescape_mysql_field(field)
+  local result = {}
+  local i = 1
+  local len = #field
+
+  while i <= len do
+    local char = field:sub(i, i)
+    if char == "\\" and i < len then
+      local next_char = field:sub(i + 1, i + 1)
+      if next_char == "n" then
+        table.insert(result, "\n")
+        i = i + 2
+      elseif next_char == "t" then
+        table.insert(result, "\t")
+        i = i + 2
+      elseif next_char == "\\" then
+        table.insert(result, "\\")
+        i = i + 2
+      elseif next_char == "0" then
+        table.insert(result, "\0")
+        i = i + 2
+      else
+        -- Not a recognized escape, keep the backslash
+        table.insert(result, char)
+        i = i + 1
+      end
+    else
+      table.insert(result, char)
+      i = i + 1
+    end
+  end
+
+  return table.concat(result)
+end
+
 --- Parse MySQL tab-separated output into rows
+--- MySQL batch mode outputs TSV with escape sequences for special chars:
+--- \n for newlines, \t for tabs, \\ for backslashes, \0 for NULL bytes
 --- @param raw string Raw tab-separated output from mysql CLI
 --- @return table Array of rows, where each row is an array of field values
 function MySQLAdapter:parse_output(raw)
   local rows = {}
   for line in raw:gmatch("[^\r\n]+") do
     local row = {}
-    for field in line:gmatch("[^\t]+") do
-      table.insert(row, field)
+    -- Split by tabs, but we need to handle empty fields too
+    local pos = 1
+    local len = #line
+    while pos <= len do
+      local tab_pos = line:find("\t", pos, true)
+      local field
+      if tab_pos then
+        field = line:sub(pos, tab_pos - 1)
+        pos = tab_pos + 1
+      else
+        field = line:sub(pos)
+        pos = len + 1
+      end
+      -- Unescape MySQL escape sequences
+      table.insert(row, unescape_mysql_field(field))
+    end
+    -- Handle trailing tab (empty last field)
+    if line:sub(-1) == "\t" then
+      table.insert(row, "")
     end
     table.insert(rows, row)
   end

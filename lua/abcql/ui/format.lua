@@ -110,6 +110,8 @@ function M.calculate_column_widths(columns, rows, max_width)
     for i = 1, #widths do
       local cell = row[i]
       local cell_str = cell == nil and "NULL" or tostring(cell)
+      -- Sanitize for consistent width calculation
+      cell_str = M.sanitize_for_display(cell_str)
       local cell_len = vim.fn.strdisplaywidth(cell_str)
       if cell_len > widths[i] then
         widths[i] = math.min(cell_len, max_width)
@@ -118,6 +120,14 @@ function M.calculate_column_widths(columns, rows, max_width)
   end
 
   return widths
+end
+
+--- Sanitize a string for single-line display by replacing control characters
+--- @param str string The string to sanitize
+--- @return string The sanitized string
+function M.sanitize_for_display(str)
+  -- Replace newlines, carriage returns, and tabs with visible placeholders
+  return str:gsub("\r\n", " "):gsub("\n", " "):gsub("\r", " "):gsub("\t", " ")
 end
 
 --- Format a row with proper column widths and padding
@@ -129,6 +139,8 @@ function M.format_row(row, widths)
   for i = 1, #widths do
     local cell = row[i]
     local cell_str = cell == nil and "NULL" or tostring(cell)
+    -- Sanitize for single-line display
+    cell_str = M.sanitize_for_display(cell_str)
     local width = widths[i]
     local cell_width = vim.fn.strdisplaywidth(cell_str)
     if cell_width > width then

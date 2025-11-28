@@ -90,7 +90,6 @@ function M.apply_highlights(buf, results, line_offset, widths)
   local byte_pos = 1
   local col_idx = 1
   while byte_pos <= #header_line_content do
-    local char = header_line_content:sub(byte_pos, byte_pos)
     -- Check for start of │ (first byte is 0xE2 in UTF-8 for box drawing)
     if header_line_content:sub(byte_pos, byte_pos + 2) == "│" then
       -- Skip the │ and the space after it
