@@ -442,23 +442,32 @@ function UI.display(results, results_title)
   -- Handle write queries (INSERT, UPDATE, DELETE)
   if results.query_type == "write" then
     table.insert(lines, "")
-    table.insert(lines, " Query executed successfully")
+    table.insert(lines, " ✓ Query executed successfully")
     table.insert(lines, "")
-    table.insert(lines, string.format(" Rows affected:  %-23d", results.affected_rows or 0))
 
-    -- Only show matched/changed rows for UPDATE queries (when they differ from affected)
+    -- Build summary line
+    local affected = results.affected_rows or 0
+    local summary_parts = {}
+
     if results.matched_rows and results.matched_rows > 0 then
-      table.insert(lines, string.format(" Rows matched:   %-23d", results.matched_rows))
-      table.insert(lines, string.format(" Rows changed:   %-23d", results.changed_rows or 0))
+      -- UPDATE query - show matched/changed
+      table.insert(summary_parts, string.format("%d matched", results.matched_rows))
+      table.insert(summary_parts, string.format("%d changed", results.changed_rows or 0))
+    else
+      -- INSERT/DELETE - show affected
+      local row_word = affected == 1 and "row" or "rows"
+      table.insert(summary_parts, string.format("%d %s affected", affected, row_word))
     end
 
     if results.warnings and results.warnings > 0 then
-      table.insert(lines, string.format(" Warnings:       %-23d", results.warnings))
+      table.insert(summary_parts, string.format("%d warnings", results.warnings))
     end
 
     if results.duration_ms then
-      table.insert(lines, string.format(" Time: %-23s", format_duration(results.duration_ms)))
+      table.insert(summary_parts, format_duration(results.duration_ms))
     end
+
+    table.insert(lines, " " .. table.concat(summary_parts, " • "))
     table.insert(lines, "")
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
@@ -499,14 +508,13 @@ function UI.display(results, results_title)
   -- Track where the table ends for footer highlighting
   local table_end_line = #lines
 
-  table.insert(lines, "")
-
-  local row_count = format.format_row_count(#rows)
-  table.insert(lines, string.format(" %s ", row_count))
-
+  -- Compact footer: "2 rows • 45ms"
+  local footer_parts = {}
+  table.insert(footer_parts, format.format_row_count(#rows))
   if results.duration_ms then
-    table.insert(lines, string.format(" Execution time: %s ", format_duration(results.duration_ms)))
+    table.insert(footer_parts, format_duration(results.duration_ms))
   end
+  table.insert(lines, " " .. table.concat(footer_parts, " • "))
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
