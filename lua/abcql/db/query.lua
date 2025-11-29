@@ -277,8 +277,14 @@ function Query.execute_query_at_cursor()
     -- Show query preview in floating window
     show_query_confirmation_prompt(query_at_cursor, function()
       vim.notify("Executing query:\n" .. query_at_cursor, vim.log.levels.INFO)
-      local active_datasource = require("abcql.db").get_active_datasource(vim.api.nvim_get_current_buf())
+      local Database = require("abcql.db")
+      local active_datasource = Database.get_active_datasource(vim.api.nvim_get_current_buf())
+      local History = require("abcql.history")
+
       Query.execute_async(active_datasource.adapter, query_at_cursor, function(results, err)
+        -- Save to history (both success and error cases)
+        History.save(query_at_cursor, active_datasource.name, active_datasource.adapter.config.database, results, err)
+
         if err then
           -- Display error in results pane instead of notification
           require("abcql.ui").display(err)

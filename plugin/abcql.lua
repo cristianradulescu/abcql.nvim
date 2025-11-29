@@ -159,3 +159,67 @@ vim.api.nvim_create_user_command("AbcqlReloadDatasources", function()
 end, {
   desc = "Reload datasources from config files",
 })
+
+--- Navigate to previous query in history
+vim.api.nvim_create_user_command("AbcqlHistoryBack", function()
+  local History = require("abcql.history")
+  local UI = require("abcql.ui")
+  local entry = History.go_back()
+
+  if entry then
+    if entry.error then
+      UI.display(entry.error, "[abcql] History")
+    elseif entry.result then
+      UI.display(entry.result, "[abcql] History")
+    end
+  end
+end, {
+  desc = "Navigate to previous query in history",
+})
+
+--- Navigate to next query in history (toward latest)
+vim.api.nvim_create_user_command("AbcqlHistoryForward", function()
+  local History = require("abcql.history")
+  local UI = require("abcql.ui")
+  local entry, is_latest = History.go_forward()
+
+  if is_latest then
+    local results = UI.get_current_results()
+    if results then
+      UI.display(results)
+    end
+  elseif entry then
+    if entry.error then
+      UI.display(entry.error, "[abcql] History")
+    elseif entry.result then
+      UI.display(entry.result, "[abcql] History")
+    end
+  end
+end, {
+  desc = "Navigate to next query in history",
+})
+
+--- Clear all query history
+vim.api.nvim_create_user_command("AbcqlHistoryClear", function()
+  local History = require("abcql.history")
+  local deleted = History.clear()
+  vim.notify(string.format("Cleared %d history entries", deleted), vim.log.levels.INFO)
+end, {
+  desc = "Clear all query history",
+})
+
+--- Show query history info
+vim.api.nvim_create_user_command("AbcqlHistoryInfo", function()
+  local History = require("abcql.history")
+  local count = History.count()
+  local pos, total = History.get_position()
+
+  if count == 0 then
+    vim.notify("No query history", vim.log.levels.INFO)
+  else
+    local status = pos == 0 and "viewing latest" or string.format("viewing %d/%d", pos, total)
+    vim.notify(string.format("Query history: %d entries (%s)", count, status), vim.log.levels.INFO)
+  end
+end, {
+  desc = "Show query history information",
+})

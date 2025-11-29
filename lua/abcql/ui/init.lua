@@ -191,12 +191,69 @@ local function show_cell_popup()
   end, { buffer = buf })
 end
 
+--- Navigate to previous query in history and display it
+local function history_go_back()
+  local History = require("abcql.history")
+  local entry = History.go_back()
+
+  if entry then
+    if entry.error then
+      UI.display(entry.error, "[abcql] History")
+    elseif entry.result then
+      UI.display(entry.result, "[abcql] History")
+    end
+    -- Update buffer name to show history position
+    local pos, total = History.get_position()
+    if state.results_buf and vim.api.nvim_buf_is_valid(state.results_buf) then
+      vim.api.nvim_buf_set_name(state.results_buf, string.format("[abcql] History [%d/%d]", pos, total))
+    end
+  end
+end
+
+--- Navigate to next query in history (toward latest) and display it
+local function history_go_forward()
+  local History = require("abcql.history")
+  local entry, is_latest = History.go_forward()
+
+  if is_latest then
+    -- Back to live result - restore original buffer name
+    if state.results_buf and vim.api.nvim_buf_is_valid(state.results_buf) then
+      vim.api.nvim_buf_set_name(state.results_buf, "[abcql] Query Results")
+    end
+    -- Display current results if available
+    if state.current_results then
+      UI.display(state.current_results)
+    end
+  elseif entry then
+    if entry.error then
+      UI.display(entry.error, "[abcql] History")
+    elseif entry.result then
+      UI.display(entry.result, "[abcql] History")
+    end
+    -- Update buffer name to show history position
+    local pos, total = History.get_position()
+    if state.results_buf and vim.api.nvim_buf_is_valid(state.results_buf) then
+      vim.api.nvim_buf_set_name(state.results_buf, string.format("[abcql] History [%d/%d]", pos, total))
+    end
+  end
+end
+
 --- Setup keymaps for the results buffer
 --- @param buf number Buffer ID
 local function setup_results_keymaps(buf)
   vim.keymap.set("n", "]]", show_cell_popup, {
     buffer = buf,
     desc = "Show full cell content",
+  })
+
+  vim.keymap.set("n", "<C-o>", history_go_back, {
+    buffer = buf,
+    desc = "Go to previous query in history",
+  })
+
+  vim.keymap.set("n", "<C-i>", history_go_forward, {
+    buffer = buf,
+    desc = "Go to next query in history",
   })
 end
 
