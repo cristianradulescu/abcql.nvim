@@ -4,6 +4,12 @@ local M = {}
 --- Namespace for abcql extmarks
 M.ns = vim.api.nvim_create_namespace("abcql_results")
 
+--- Clear all highlights from a buffer
+--- @param buf number Buffer ID
+function M.clear(buf)
+  vim.api.nvim_buf_clear_namespace(buf, M.ns, 0, -1)
+end
+
 --- Define highlight groups with sensible defaults
 --- These link to existing highlight groups so they adapt to the user's colorscheme
 function M.setup()
@@ -31,6 +37,10 @@ function M.setup()
   vim.api.nvim_set_hl(0, "AbcqlSuccess", { link = "DiagnosticOk", default = true })
   vim.api.nvim_set_hl(0, "AbcqlError", { link = "DiagnosticError", default = true })
   vim.api.nvim_set_hl(0, "AbcqlWarning", { link = "DiagnosticWarn", default = true })
+
+  -- History query display
+  vim.api.nvim_set_hl(0, "AbcqlQueryLabel", { link = "Title", default = true })
+  vim.api.nvim_set_hl(0, "AbcqlQueryText", { link = "String", default = true })
 end
 
 --- Check if a string looks like a number
@@ -166,8 +176,6 @@ end
 --- @param start_line number Starting line (0-indexed)
 --- @param end_line number Ending line (0-indexed, exclusive)
 function M.apply_error_highlights(buf, start_line, end_line)
-  vim.api.nvim_buf_clear_namespace(buf, M.ns, 0, -1)
-
   for line = start_line, end_line - 1 do
     vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlError", line, 0, -1)
   end
@@ -178,8 +186,6 @@ end
 --- @param start_line number Starting line (0-indexed)
 --- @param end_line number Ending line (0-indexed, exclusive)
 function M.apply_write_highlights(buf, start_line, end_line)
-  vim.api.nvim_buf_clear_namespace(buf, M.ns, 0, -1)
-
   -- First non-empty line is the success message
   vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlSuccess", start_line + 1, 0, -1)
 
@@ -194,6 +200,30 @@ end
 --- @param line_num number Line number (0-indexed)
 function M.apply_footer_highlight(buf, line_num)
   vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlFooter", line_num, 0, -1)
+end
+
+--- Apply highlights for query section in history view
+--- @param buf number Buffer ID
+--- @param query_line_count number Number of lines in the query section
+function M.apply_query_highlights(buf, query_line_count)
+  if query_line_count == 0 then
+    return
+  end
+
+  -- Line 1 (0-indexed: 1): "Query:" label
+  vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlQueryLabel", 1, 0, -1)
+  -- Line 2 (0-indexed: 2): separator "──────"
+  vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlBorder", 2, 0, -1)
+
+  -- Query text lines (simple highlighting)
+  for line = 3, query_line_count - 3 do
+    vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlQueryText", line, 0, -1)
+  end
+
+  -- "Results:" label (query_line_count - 2)
+  vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlQueryLabel", query_line_count - 2, 0, -1)
+  -- Separator "────────" (query_line_count - 1)
+  vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlBorder", query_line_count - 1, 0, -1)
 end
 
 return M

@@ -197,10 +197,11 @@ local function history_go_back()
   local entry = History.go_back()
 
   if entry then
+    local display_opts = { query = entry.query }
     if entry.error then
-      UI.display(entry.error, "[abcql] History")
+      UI.display(entry.error, "[abcql] History", display_opts)
     elseif entry.result then
-      UI.display(entry.result, "[abcql] History")
+      UI.display(entry.result, "[abcql] History", display_opts)
     end
     -- Update buffer name to show history position
     local pos, total = History.get_position()
@@ -220,15 +221,16 @@ local function history_go_forward()
     if state.results_buf and vim.api.nvim_buf_is_valid(state.results_buf) then
       vim.api.nvim_buf_set_name(state.results_buf, "[abcql] Query Results")
     end
-    -- Display current results if available
+    -- Display current results if available (no query shown for live results)
     if state.current_results then
       UI.display(state.current_results)
     end
   elseif entry then
+    local display_opts = { query = entry.query }
     if entry.error then
-      UI.display(entry.error, "[abcql] History")
+      UI.display(entry.error, "[abcql] History", display_opts)
     elseif entry.result then
-      UI.display(entry.result, "[abcql] History")
+      UI.display(entry.result, "[abcql] History", display_opts)
     end
     -- Update buffer name to show history position
     local pos, total = History.get_position()
@@ -560,11 +562,13 @@ end
 --- Display query results or errors in the results buffer
 --- @param results QueryResult|string Results object with columns, rows, and optional metadata, or error message string
 --- @param results_title string? Optional title for the results buffer
-function UI.display(results, results_title)
+--- @param opts table? Optional display options { query = string } - query to show above results (for history)
+function UI.display(results, results_title, opts)
+  opts = opts or {}
   local buf = state.results_buf
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
     UI.open()
-    UI.display(results, results_title)
+    UI.display(results, results_title, opts)
     return
   end
   if results_title ~= nil then
@@ -572,7 +576,28 @@ function UI.display(results, results_title)
   end
   vim.bo[buf].modifiable = true
 
+  -- Clear previous highlights
+  local highlights = require("abcql.ui.highlights")
+  highlights.clear(buf)
+
   local lines = {}
+  local query_line_count = 0
+
+  -- If a query is provided (history browsing), display it first
+  if opts.query then
+    table.insert(lines, "")
+    table.insert(lines, " Query:")
+    table.insert(lines, " ──────")
+    -- Split query into lines and add indentation
+    local query_lines = vim.split(opts.query, "\n")
+    for _, line in ipairs(query_lines) do
+      table.insert(lines, "   " .. line)
+    end
+    table.insert(lines, "")
+    table.insert(lines, " Results:")
+    table.insert(lines, " ────────")
+    query_line_count = #lines
+  end
 
   -- Store current results for export (only if not an error string)
   if type(results) == "table" then
@@ -618,9 +643,11 @@ function UI.display(results, results_title)
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
     vim.bo[buf].modifiable = false
 
-    -- Apply error highlights
-    local highlights = require("abcql.ui.highlights")
-    highlights.apply_error_highlights(buf, 0, #lines)
+    -- Apply highlights
+    if query_line_count > 0 then
+      highlights.apply_query_highlights(buf, query_line_count)
+    end
+    highlights.apply_error_highlights(buf, query_line_count, #lines)
     return
   end
 
@@ -658,9 +685,11 @@ function UI.display(results, results_title)
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
     vim.bo[buf].modifiable = false
 
-    -- Apply write query highlights
-    local highlights = require("abcql.ui.highlights")
-    highlights.apply_write_highlights(buf, 0, #lines)
+    -- Apply highlights
+    if query_line_count > 0 then
+      highlights.apply_query_highlights(buf, query_line_count)
+    end
+    highlights.apply_write_highlights(buf, query_line_count, #lines)
     return
   end
 
@@ -714,8 +743,10 @@ function UI.display(results, results_title)
   vim.bo[buf].modifiable = false
 
   -- Apply syntax highlighting
-  local highlights = require("abcql.ui.highlights")
-  highlights.apply_highlights(buf, results, 0, widths)
+  if query_line_count > 0 then
+    highlights.apply_query_highlights(buf, query_line_count)
+  end
+  highlights.apply_highlights(buf, results, query_line_count, widths)
 
   -- Highlight footer lines
   for i = table_end_line + 1, #lines - 1 do
