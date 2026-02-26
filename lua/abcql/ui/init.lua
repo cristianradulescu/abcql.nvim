@@ -3,6 +3,9 @@ local UI = {}
 
 ---@alias abcql.UI.LayoutOpts { editor_buf: number? }
 
+-- Augroup for all UI-related autocmds (WinClosed, BufEnter guards)
+local AUGROUP = vim.api.nvim_create_augroup("abcql_ui", { clear = true })
+
 -- State management for the abcql UI
 -- This table tracks all buffers, windows, and visibility state for the UI components
 local state = {
@@ -27,6 +30,13 @@ local state = {
   -- Column widths for current results (for cell detection)
   current_widths = nil,
 }
+
+--- Check if the UI layout is valid (editor window exists and is usable)
+--- @return boolean
+function UI.is_valid()
+  return state.editor_win ~= nil and vim.api.nvim_win_is_valid(state.editor_win)
+    and state.editor_buf ~= nil and vim.api.nvim_buf_is_valid(state.editor_buf)
+end
 
 --- Create the query editor buffer
 --- @return number buf Buffer ID
@@ -57,7 +67,7 @@ local function create_results_buffer()
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(buf, "[abcql] Query Results")
   vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
-  vim.api.nvim_buf_set_option(buf, "bufhidden", "hide")
+  vim.api.nvim_buf_set_option(buf, "bufhidden", "wipe")
   vim.api.nvim_buf_set_option(buf, "swapfile", false)
   vim.api.nvim_buf_set_option(buf, "modifiable", false) -- Results are read-only
 
@@ -159,6 +169,7 @@ local function show_cell_popup()
   end
 
   local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = buf })
   local lines = vim.split(value, "\n")
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 
@@ -266,7 +277,7 @@ local function create_data_source_tree_buffer()
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(buf, "[abcql] Data Sources")
   vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
-  vim.api.nvim_buf_set_option(buf, "bufhidden", "hide")
+  vim.api.nvim_buf_set_option(buf, "bufhidden", "wipe")
   vim.api.nvim_buf_set_option(buf, "swapfile", false)
 
   local win_options_callback = function(win)
@@ -368,8 +379,14 @@ function UI.open(opts)
     end
   end
 
+  -- If the UI is already open, focus the editor window instead of re-creating
+  if UI.is_valid() then
+    vim.api.nvim_set_current_win(state.editor_win)
+    return
+  end
+
   -- Set editor buffer based on provided buffer
-  if state.editor_buf == nil and opts.editor_buf ~= nil and vim.api.nvim_buf_is_valid(opts.editor_buf) then
+  if opts.editor_buf ~= nil and vim.api.nvim_buf_is_valid(opts.editor_buf) then
     state.editor_buf = opts.editor_buf
   else
     vim.notify("abcql UI is missing the query editor", vim.log.levels.ERROR)
@@ -394,7 +411,15 @@ function UI.open(opts)
   --   +-------------------+-------+
 
   -- The current window will become the editor window
-  state.editor_win = vim.api.nvim_get_current_win()
+  -- Don't hijack floating windows — create a new normal window first
+  local cur_win = vim.api.nvim_get_current_win()
+  local win_config = vim.api.nvim_win_get_config(cur_win)
+  if win_config.relative and win_config.relative ~= "" then
+    vim.cmd("enew")
+    cur_win = vim.api.nvim_get_current_win()
+  end
+
+  state.editor_win = cur_win
   vim.api.nvim_win_set_buf(state.editor_win, state.editor_buf)
 
   -- Create vertical split on the right for the data source tree (30 columns wide)
@@ -429,11 +454,98 @@ function UI.open(opts)
   -- Initialize visibility state
   state.results_visible = true
   state.data_source_tree_visible = true
+
+  -- Register WinClosed autocmds to sync state when windows are closed externally
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = AUGROUP,
+    pattern = tostring(state.editor_win),
+    once = true,
+    callback = function()
+      -- Editor is the anchor — tear down the entire layout
+      state.editor_win = nil
+      UI.close()
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = AUGROUP,
+    pattern = tostring(state.results_win),
+    once = true,
+    callback = function()
+      state.results_win = nil
+      state.results_visible = false
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = AUGROUP,
+    pattern = tostring(state.datasource_tree_win),
+    once = true,
+    callback = function()
+      state.datasource_tree_win = nil
+      state.data_source_tree_visible = false
+    end,
+  })
+
+  -- BufEnter guard: redirect foreign buffers away from results/tree windows
+  vim.api.nvim_create_autocmd("BufEnter", {
+    group = AUGROUP,
+    callback = function(args)
+      local win = vim.api.nvim_get_current_win()
+      local buf = args.buf
+
+      -- Check if a foreign buffer entered the results window
+      if win == state.results_win and buf ~= state.results_buf then
+        vim.schedule(function()
+          if state.results_win and vim.api.nvim_win_is_valid(state.results_win)
+            and state.results_buf and vim.api.nvim_buf_is_valid(state.results_buf) then
+            vim.api.nvim_win_set_buf(state.results_win, state.results_buf)
+          end
+          -- Redirect the intruding buffer to the editor window
+          if state.editor_win and vim.api.nvim_win_is_valid(state.editor_win)
+            and vim.api.nvim_buf_is_valid(buf) then
+            vim.api.nvim_win_set_buf(state.editor_win, buf)
+            vim.api.nvim_set_current_win(state.editor_win)
+          end
+        end)
+        return
+      end
+
+      -- Check if a foreign buffer entered the tree window
+      if win == state.datasource_tree_win and buf ~= state.datasource_tree_buf then
+        vim.schedule(function()
+          if state.datasource_tree_win and vim.api.nvim_win_is_valid(state.datasource_tree_win)
+            and state.datasource_tree_buf and vim.api.nvim_buf_is_valid(state.datasource_tree_buf) then
+            vim.api.nvim_win_set_buf(state.datasource_tree_win, state.datasource_tree_buf)
+          end
+          -- Redirect the intruding buffer to the editor window
+          if state.editor_win and vim.api.nvim_win_is_valid(state.editor_win)
+            and vim.api.nvim_buf_is_valid(buf) then
+            vim.api.nvim_win_set_buf(state.editor_win, buf)
+            vim.api.nvim_set_current_win(state.editor_win)
+          end
+        end)
+        return
+      end
+    end,
+  })
 end
 
 --- Close the ABCQL UI
 --- Closes all windows and deletes all buffers associated with the UI
 function UI.close()
+  -- Clear all UI autocmds first to prevent re-entrant callbacks
+  vim.api.nvim_clear_autocmds({ group = AUGROUP })
+
+  -- Disable winfix options on close to prevent issues with buffers not related to the plugin
+  if state.results_win and vim.api.nvim_win_is_valid(state.results_win) then
+    vim.api.nvim_set_option_value("winfixbuf", false, { win = state.results_win })
+  end
+  if state.datasource_tree_win and vim.api.nvim_win_is_valid(state.datasource_tree_win) then
+    vim.api.nvim_set_option_value("winfixbuf", false, { win = state.datasource_tree_win })
+    vim.api.nvim_set_option_value("winfixwidth", false, { win = state.datasource_tree_win })
+  end
+
   -- Delete all buffers if they exist and are valid
   if state.editor_buf and vim.api.nvim_buf_is_valid(state.editor_buf) then
     vim.api.nvim_buf_delete(state.editor_buf, { force = true })
@@ -457,6 +569,7 @@ function UI.close()
   state.results_visible = false
   state.data_source_tree_visible = false
 
+
   vim.notify("Closed abcql UI", vim.log.levels.INFO)
 end
 
@@ -464,8 +577,7 @@ end
 --- If visible, closes the window but keeps the buffer
 --- If hidden, recreates the window in the correct position
 function UI.toggle_results()
-  -- Check if UI is open
-  if not state.editor_buf or not vim.api.nvim_buf_is_valid(state.editor_buf) then
+  if not UI.is_valid() then
     vim.notify("abcql UI is not open", vim.log.levels.WARN)
     return
   end
@@ -508,8 +620,7 @@ end
 --- If visible, closes the window but keeps the buffer
 --- If hidden, recreates the window in the correct position
 function UI.toggle_tree()
-  -- Check if UI is open
-  if not state.editor_buf or not vim.api.nvim_buf_is_valid(state.editor_buf) then
+  if not UI.is_valid() then
     vim.notify("abcql UI is not open", vim.log.levels.WARN)
     return
   end
