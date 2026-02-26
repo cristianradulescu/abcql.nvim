@@ -193,7 +193,7 @@ end
 --- Fetch list of all databases asynchronously
 --- @param callback function Called with (databases, error) where databases is array of database names
 function MySQLAdapter:get_databases(callback)
-  local query = "SHOW DATABASES like '" .. self.config.database .. "'"
+  local query = "SHOW DATABASES like '" .. self:escape_value(self.config.database) .. "'"
   Query.execute_async(self, query, function(result, err)
     if err then
       callback(nil, err)

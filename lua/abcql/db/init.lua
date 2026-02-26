@@ -14,6 +14,9 @@ Database.connectionRegistry = ConnectionRegistry.new()
 --- Setup the database module with configuration
 --- @param config abcql.Config
 function Database.setup(config)
+  -- Reset registry to pick up changed DSN values on reload
+  Database.connectionRegistry = ConnectionRegistry.new()
+
   -- Register built-in adapters
   local MySQLAdapter = require("abcql.db.adapter.mysql")
   Database.connectionRegistry:register_adapter("mysql", MySQLAdapter)

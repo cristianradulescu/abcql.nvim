@@ -1,6 +1,6 @@
 describe("History", function()
   local History
-  local original_getcwd
+  local original_stdpath
   local original_notify
   local test_dir
 
@@ -9,10 +9,13 @@ describe("History", function()
     test_dir = vim.fn.tempname()
     vim.fn.mkdir(test_dir, "p")
 
-    -- Mock getcwd to return our test directory (same approach as storage_spec)
-    original_getcwd = vim.fn.getcwd
-    vim.fn.getcwd = function()
-      return test_dir
+    -- Mock stdpath to return our test directory
+    original_stdpath = vim.fn.stdpath
+    vim.fn.stdpath = function(what)
+      if what == "data" then
+        return test_dir
+      end
+      return original_stdpath(what)
     end
 
     -- Mock vim.notify to avoid test output noise
@@ -30,7 +33,7 @@ describe("History", function()
 
   after_each(function()
     -- Restore mocks
-    vim.fn.getcwd = original_getcwd
+    vim.fn.stdpath = original_stdpath
     vim.notify = original_notify
 
     -- Clean up test directory

@@ -69,7 +69,28 @@ function M.load_config_file(path)
     return nil, nil -- File doesn't exist, not an error
   end
 
-  -- Load the file
+  -- Load the file using vim.secure.trust if available (Neovim 0.9+)
+  -- This prompts the user to trust the file before executing it
+  if vim.secure and vim.secure.read then
+    local content = vim.secure.read(path)
+    if not content then
+      return nil, nil -- User declined to trust the file
+    end
+    local chunk, load_err = loadstring(content, path)
+    if not chunk then
+      return nil, string.format("Failed to parse config file '%s': %s", path, load_err)
+    end
+    local ok, result = pcall(chunk)
+    if not ok then
+      return nil, string.format("Failed to load config file '%s': %s", path, result)
+    end
+    if type(result) ~= "table" then
+      return nil, string.format("Config file '%s' must return a table", path)
+    end
+    return result, nil
+  end
+
+  -- Fallback for older Neovim versions
   local ok, result = pcall(dofile, path)
   if not ok then
     return nil, string.format("Failed to load config file '%s': %s", path, result)

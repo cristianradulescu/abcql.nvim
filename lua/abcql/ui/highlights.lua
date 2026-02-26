@@ -71,9 +71,6 @@ end
 --- @param line_offset number Starting line number (0-indexed)
 --- @param widths table Column widths array
 function M.apply_highlights(buf, results, line_offset, widths)
-  -- Clear existing extmarks
-  vim.api.nvim_buf_clear_namespace(buf, M.ns, 0, -1)
-
   local headers = results.headers or {}
   local rows = results.rows or {}
 

@@ -2,32 +2,35 @@ local Storage = require("abcql.history.storage")
 
 describe("History Storage", function()
   local test_dir
-  local original_getcwd
+  local original_stdpath
 
   before_each(function()
     -- Create a temporary test directory
     test_dir = vim.fn.tempname()
     vim.fn.mkdir(test_dir, "p")
 
-    -- Mock getcwd to return our test directory
-    original_getcwd = vim.fn.getcwd
-    vim.fn.getcwd = function()
-      return test_dir
+    -- Mock stdpath to return our test directory
+    original_stdpath = vim.fn.stdpath
+    vim.fn.stdpath = function(what)
+      if what == "data" then
+        return test_dir
+      end
+      return original_stdpath(what)
     end
   end)
 
   after_each(function()
-    -- Restore getcwd
-    vim.fn.getcwd = original_getcwd
+    -- Restore stdpath
+    vim.fn.stdpath = original_stdpath
 
     -- Clean up test directory
     vim.fn.delete(test_dir, "rf")
   end)
 
   describe("get_history_dir", function()
-    it("should return path in current working directory", function()
+    it("should return path under stdpath data directory", function()
       local dir = Storage.get_history_dir()
-      assert.are.equal(test_dir .. "/.abcql/query_history", dir)
+      assert.are.equal(test_dir .. "/abcql/query_history", dir)
     end)
   end)
 
@@ -54,8 +57,8 @@ describe("History Storage", function()
 
       assert.is_string(id1)
       assert.is_string(id2)
-      -- IDs should match pattern YYYYMMDD_HHMMSS_XXX
-      assert.is_truthy(id1:match("^%d%d%d%d%d%d%d%d_%d%d%d%d%d%d_%d%d%d$"))
+      -- IDs should match pattern YYYYMMDD_HHMMSS_XXXXXX
+      assert.is_truthy(id1:match("^%d%d%d%d%d%d%d%d_%d%d%d%d%d%d_%d%d%d%d%d%d$"))
     end)
   end)
 

@@ -135,6 +135,15 @@ function LSP:start_server(bufnr, datasource, callback)
     datasource_name = datasource.name,
   }
 
+  -- Clean up when buffer is deleted to prevent stale server entries
+  vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
+    buffer = bufnr,
+    once = true,
+    callback = function()
+      LSP.stop(bufnr)
+    end,
+  })
+
   callback(nil)
 end
 

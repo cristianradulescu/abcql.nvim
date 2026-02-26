@@ -239,9 +239,8 @@ function Parser.extract_table_aliases(text)
 
   -- Pattern 1: FROM table_name AS alias
   -- Example: FROM users AS u, FROM mydb.users AS u
-  for match_start, table_ref, alias_upper in upper_text:gmatch("()FROM%s+([%w_%.]+)%s+AS%s+([%w_]+)") do
+  for match_start, table_ref, alias_start, alias_upper in upper_text:gmatch("()FROM%s+([%w_%.]+)%s+AS%s+()([%w_]+)") do
     local table_name, database = parse_table_reference(table_ref)
-    local alias_start = match_start + #"FROM" + #table_ref + #"AS" + 3
     local alias = get_original_case(alias_start, #alias_upper)
     add_mapping(match_start, table_name, alias, database)
   end
@@ -262,9 +261,8 @@ function Parser.extract_table_aliases(text)
 
   -- Pattern 3: JOIN table_name AS alias
   -- Example: JOIN orders AS o, LEFT JOIN mydb.orders AS o
-  for match_start, table_ref, alias_upper in upper_text:gmatch("()JOIN%s+([%w_%.]+)%s+AS%s+([%w_]+)") do
+  for match_start, table_ref, alias_start, alias_upper in upper_text:gmatch("()JOIN%s+([%w_%.]+)%s+AS%s+()([%w_]+)") do
     local table_name, database = parse_table_reference(table_ref)
-    local alias_start = match_start + #"JOIN" + #table_ref + #"AS" + 3
     local alias = get_original_case(alias_start, #alias_upper)
     add_mapping(match_start, table_name, alias, database)
   end

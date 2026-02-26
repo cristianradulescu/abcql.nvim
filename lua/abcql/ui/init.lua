@@ -399,6 +399,12 @@ function UI.open(opts)
 
   setup_results_keymaps(state.results_buf)
   setup_tree_keymaps(state.datasource_tree_buf)
+
+  -- Register display callback to break circular dependency (tree -> ui)
+  require("abcql.ui.tree").set_display_fn(function(results, title)
+    UI.display(results, title)
+  end)
+
   refresh_datasource_tree()
 
   -- Create the window layout

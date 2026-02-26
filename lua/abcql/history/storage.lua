@@ -3,13 +3,12 @@
 ---@class abcql.history.Storage
 local Storage = {}
 
-local HISTORY_DIR = ".abcql/query_history"
 local MAX_ROWS_TO_SAVE = 1000 -- Limit rows saved per query to manage disk space
 
 --- Get the history directory path
 ---@return string The absolute path to the history directory
 function Storage.get_history_dir()
-  return vim.fn.getcwd() .. "/" .. HISTORY_DIR
+  return vim.fn.stdpath("data") .. "/abcql/query_history"
 end
 
 --- Ensure the history directory exists
@@ -30,11 +29,11 @@ function Storage.ensure_dir()
 end
 
 --- Generate a unique ID for a history entry
----@return string id Unique identifier (timestamp-based)
+---@return string id Unique identifier (timestamp + high-resolution suffix)
 function Storage.generate_id()
   local timestamp = os.date("%Y%m%d_%H%M%S")
-  local random_suffix = string.format("%03d", math.random(0, 999))
-  return timestamp .. "_" .. random_suffix
+  local hr_suffix = string.format("%06d", vim.uv.hrtime() % 1000000)
+  return timestamp .. "_" .. hr_suffix
 end
 
 --- Get the file path for a history entry

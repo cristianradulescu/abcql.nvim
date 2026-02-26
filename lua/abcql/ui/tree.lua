@@ -12,7 +12,16 @@ local Tree = {}
 local state = {
   root = nil,
   line_to_node = {},
+  --- @type fun(results: any, title: string?)|nil Display callback set by UI module
+  display_fn = nil,
 }
+
+--- Set the display callback used by browse_table_data
+--- This breaks the circular dependency between tree and UI modules
+--- @param fn fun(results: any, title: string?)
+function Tree.set_display_fn(fn)
+  state.display_fn = fn
+end
 
 local ICONS = {
   expanded = "󰅀",
@@ -494,9 +503,10 @@ function Tree.browse_table_data(node, callback)
     return
   end
 
-  -- Build SELECT query with LIMIT
+  -- Build SELECT query with fully qualified table name
+  local escaped_db = datasource.adapter:escape_identifier(database_name)
   local escaped_table = datasource.adapter:escape_identifier(table_name)
-  local query = string.format("SELECT * FROM %s LIMIT 1000", escaped_table)
+  local query = string.format("SELECT * FROM %s.%s LIMIT 1000", escaped_db, escaped_table)
 
   vim.notify("Browsing table: " .. table_name, vim.log.levels.INFO)
 
@@ -508,17 +518,18 @@ function Tree.browse_table_data(node, callback)
     History.save(query, datasource.name, database_name, results, err)
 
     if err then
-      -- Display error in results pane instead of notification
-      local UI = require("abcql.ui")
-      UI.display(err, "Table: " .. table_name)
+      if state.display_fn then
+        state.display_fn(err, "Table: " .. table_name)
+      end
       if callback then
         callback(false)
       end
       return
     end
 
-    local UI = require("abcql.ui")
-    UI.display(results, "Table: " .. table_name)
+    if state.display_fn then
+      state.display_fn(results, "Table: " .. table_name)
+    end
 
     if callback then
       callback(true)

@@ -276,9 +276,14 @@ function Query.execute_query_at_cursor()
   if query_at_cursor ~= "" then
     -- Show query preview in floating window
     show_query_confirmation_prompt(query_at_cursor, function()
-      vim.notify("Executing query:\n" .. query_at_cursor, vim.log.levels.INFO)
       local Database = require("abcql.db")
       local active_datasource = Database.get_active_datasource(vim.api.nvim_get_current_buf())
+      if not active_datasource then
+        vim.notify("No active datasource. Activate one first.", vim.log.levels.WARN)
+        return
+      end
+
+      vim.notify("Executing query:\n" .. query_at_cursor, vim.log.levels.INFO)
       local History = require("abcql.history")
 
       Query.execute_async(active_datasource.adapter, query_at_cursor, function(results, err)
