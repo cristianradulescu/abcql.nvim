@@ -10,6 +10,7 @@ local M = {}
 
 --- @class abcql.LoadedDatasource
 --- @field dsn string The connection string (with env vars expanded)
+--- @field proxy? string SOCKS proxy URL (e.g., "socks5://127.0.0.1:1080")
 --- @field source abcql.DatasourceSource Where this datasource was loaded from
 --- @field source_path? string Path to the config file (nil for "config" source)
 
@@ -30,6 +31,12 @@ M.CONFIG_TEMPLATE = [[
 -- Environment variables can be used with ${VAR_NAME} syntax:
 --   dev = "${DATABASE_URL}",
 --   staging = "mysql://user:${DB_PASSWORD}@staging:3306/mydb",
+--
+-- SOCKS proxy support (requires proxychains4 installed):
+--   prod = {
+--     dsn = "mysql://user:password@db-internal:3306/database",
+--     proxy = "socks5://127.0.0.1:1080",
+--   },
 
 return {
   datasources = {
@@ -110,18 +117,34 @@ function M.get_local_config_path()
   return vim.fn.getcwd() .. "/" .. M.CONFIG_FILE_NAME
 end
 
+--- Normalize a datasource value into dsn and proxy fields
+--- Supports both string DSNs and table configs with {dsn=..., proxy=...}
+--- @param value string|table The raw datasource value
+--- @return string dsn The connection string
+--- @return string|nil proxy The proxy URL if configured
+local function normalize_datasource(value)
+  if type(value) == "string" then
+    return value, nil
+  elseif type(value) == "table" then
+    return value.dsn, value.proxy
+  end
+  return value, nil
+end
+
 --- Load datasources from all config sources
 --- Returns merged datasources with source tracking
---- @param setup_datasources? table<string, string> Datasources from setup() call
+--- @param setup_datasources? table<string, string|table> Datasources from setup() call
 --- @return table<string, abcql.LoadedDatasource> Merged datasources with metadata
 function M.load_all_datasources(setup_datasources)
   local result = {}
 
   -- 1. First, add setup() datasources (lowest priority)
   if setup_datasources then
-    for name, dsn in pairs(setup_datasources) do
+    for name, value in pairs(setup_datasources) do
+      local dsn, proxy = normalize_datasource(value)
       result[name] = {
         dsn = M.expand_env_vars(dsn),
+        proxy = proxy and M.expand_env_vars(proxy) or nil,
         source = "config",
         source_path = nil,
       }
@@ -133,9 +156,11 @@ function M.load_all_datasources(setup_datasources)
   if user_err then
     vim.notify(user_err, vim.log.levels.ERROR)
   elseif user_config and user_config.datasources then
-    for name, dsn in pairs(user_config.datasources) do
+    for name, value in pairs(user_config.datasources) do
+      local dsn, proxy = normalize_datasource(value)
       result[name] = {
         dsn = M.expand_env_vars(dsn),
+        proxy = proxy and M.expand_env_vars(proxy) or nil,
         source = "user",
         source_path = M.USER_DATASOURCES_PATH,
       }
@@ -148,9 +173,11 @@ function M.load_all_datasources(setup_datasources)
   if local_err then
     vim.notify(local_err, vim.log.levels.ERROR)
   elseif local_config and local_config.datasources then
-    for name, dsn in pairs(local_config.datasources) do
+    for name, value in pairs(local_config.datasources) do
+      local dsn, proxy = normalize_datasource(value)
       result[name] = {
         dsn = M.expand_env_vars(dsn),
+        proxy = proxy and M.expand_env_vars(proxy) or nil,
         source = "local",
         source_path = local_path,
       }
@@ -167,6 +194,17 @@ function M.get_dsn_map(loaded_datasources)
   local result = {}
   for name, data in pairs(loaded_datasources) do
     result[name] = data.dsn
+  end
+  return result
+end
+
+--- Get datasource configs with DSN and optional proxy
+--- @param loaded_datasources table<string, abcql.LoadedDatasource>
+--- @return table<string, { dsn: string, proxy?: string }> name -> config mapping
+function M.get_datasource_configs(loaded_datasources)
+  local result = {}
+  for name, data in pairs(loaded_datasources) do
+    result[name] = { dsn = data.dsn, proxy = data.proxy }
   end
   return result
 end

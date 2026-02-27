@@ -27,11 +27,13 @@ function M.setup(opts)
   -- Load datasources from all sources (files + setup config)
   loaded_datasources = loader.load_all_datasources(config.datasources)
 
-  -- Update config.datasources with merged results
+  -- Update config.datasources with merged results (simple dsn map for backward compat)
   config.datasources = loader.get_dsn_map(loaded_datasources)
 
-  -- Initialize connection registry with data sources
-  require("abcql.db").setup(config)
+  -- Initialize connection registry with data sources (includes proxy config)
+  local db_config = vim.deepcopy(config)
+  db_config.datasources = loader.get_datasource_configs(loaded_datasources)
+  require("abcql.db").setup(db_config)
 end
 
 --- Reload datasources from config files
@@ -43,8 +45,10 @@ function M.reload_datasources()
   -- Update config
   config.datasources = loader.get_dsn_map(loaded_datasources)
 
-  -- Re-initialize the database module
-  require("abcql.db").setup(config)
+  -- Re-initialize the database module (includes proxy config)
+  local db_config = vim.deepcopy(config)
+  db_config.datasources = loader.get_datasource_configs(loaded_datasources)
+  require("abcql.db").setup(db_config)
 
   vim.notify("abcql: Datasources reloaded", vim.log.levels.INFO)
 end

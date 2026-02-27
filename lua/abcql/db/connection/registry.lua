@@ -26,9 +26,10 @@ end
 --- Register a data source name (DSN) with a friendly name
 --- @param name string The friendly name for the data source
 --- @param dsn string The data source name (DSN) string
+--- @param proxy? string SOCKS proxy URL (e.g., "socks5://localhost:1080")
 --- @return Datasource|nil The registered data source if successful, nil otherwise
 --- @return string|nil Error message if registration failed
-function Registry:register_datasource(name, dsn)
+function Registry:register_datasource(name, dsn, proxy)
   -- Check if data source already exists
   if self.datasources[name] then
     return self.datasources[name], nil
@@ -54,6 +55,7 @@ function Registry:register_datasource(name, dsn)
     password = parsed.password,
     database = parsed.database,
     options = parsed.options,
+    proxy = proxy,
   })
 
   local datasource = {

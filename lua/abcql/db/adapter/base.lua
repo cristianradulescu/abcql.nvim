@@ -1,4 +1,4 @@
----@alias AdapterConfig { host?: string, port?: number, user?: string, password?: string, database?: string, options?: table<string, string> }
+---@alias AdapterConfig { host?: string, port?: number, user?: string, password?: string, database?: string, options?: table<string, string>, proxy?: string }
 
 ---@class abcql.db.adapter.Adapter
 ---@field config {}
@@ -100,6 +100,68 @@ end
 --- @return string The escaped value
 function Adapter:escape_value(value)
   return value
+end
+
+--- Parse a SOCKS proxy URL into components
+--- @param proxy_url string Proxy URL (e.g., "socks5://localhost:1080")
+--- @return table|nil Parsed proxy with type, host, port fields
+--- @return string|nil Error message if parsing failed
+local function parse_proxy_url(proxy_url)
+  local proxy_type, host, port = proxy_url:match("^(socks[45])://([^:]+):(%d+)$")
+  if not proxy_type then
+    return nil, "Invalid proxy URL format: " .. proxy_url .. " (expected socks4://host:port or socks5://host:port)"
+  end
+  return { type = proxy_type, host = host, port = tonumber(port) }, nil
+end
+
+--- Generate a proxychains config file for the given proxy
+--- @param proxy table Parsed proxy with type, host, port fields
+--- @return string path Path to the generated config file
+local function generate_proxychains_config(proxy)
+  local config_content = string.format(
+    "strict_chain\nquiet_mode\n[ProxyList]\n%s %s %d\n",
+    proxy.type, proxy.host, proxy.port
+  )
+  local path = os.tmpname()
+  local file = io.open(path, "w")
+  if file then
+    file:write(config_content)
+    file:close()
+  end
+  return path
+end
+
+--- Build the full command array for execution, wrapping with proxychains if proxy is configured
+--- @param cmd string The base command (e.g., "mysql")
+--- @param args table Array of command-line arguments
+--- @return table The full command array ready for vim.system()
+function Adapter:build_command(cmd, args)
+  if not self.config.proxy then
+    return { cmd, unpack(args) }
+  end
+
+  -- Generate proxychains config on first use, cache for reuse
+  if not self._proxychains_config_path then
+    local proxy, err = parse_proxy_url(self.config.proxy)
+    if not proxy then
+      vim.notify("abcql: " .. err, vim.log.levels.ERROR)
+      return { cmd, unpack(args) }
+    end
+
+    -- Check that proxychains4 is available
+    if vim.fn.executable("proxychains4") ~= 1 then
+      vim.notify("abcql: proxychains4 is not installed. Install it to use SOCKS proxy connections.", vim.log.levels.ERROR)
+      return { cmd, unpack(args) }
+    end
+
+    self._proxychains_config_path = generate_proxychains_config(proxy)
+  end
+
+  local full_cmd = { "proxychains4", "-q", "-f", self._proxychains_config_path, cmd }
+  for _, arg in ipairs(args) do
+    table.insert(full_cmd, arg)
+  end
+  return full_cmd
 end
 
 return Adapter

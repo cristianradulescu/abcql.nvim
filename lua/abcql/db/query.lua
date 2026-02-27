@@ -21,8 +21,8 @@ function Query.execute_async(adapter, query, callback, opts)
   -- Record start time
   local start_time = vim.loop.hrtime()
 
-  -- Execute command asynchronously
-  vim.system({ cmd, unpack(args) }, {
+  -- Execute command asynchronously (wraps with proxychains if proxy is configured)
+  vim.system(adapter:build_command(cmd, args), {
     text = true,
     timeout = opts.timeout or 30000, -- 30 second default timeout
   }, function(result)
@@ -109,9 +109,9 @@ function Query.execute_sync(adapter, query, opts)
   -- Record start time
   local start_time = vim.loop.hrtime()
 
-  -- Execute synchronously
+  -- Execute synchronously (wraps with proxychains if proxy is configured)
   local result = vim
-    .system({ cmd, unpack(args) }, {
+    .system(adapter:build_command(cmd, args), {
       text = true,
       timeout = opts.timeout or 30000,
     })

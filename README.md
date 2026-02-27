@@ -75,6 +75,25 @@ You can use `:AbcqlInitConfig` to generate a template file.
 
 > **Important:** Add `.abcql.lua` to your `.gitignore` to avoid committing credentials.
 
+#### SOCKS Proxy Support
+
+To connect through a SOCKS proxy (e.g., SSH tunnel, VPN), use a table-style datasource config with a `proxy` field. This requires [`proxychains4`](https://github.com/rofl0r/proxychains-ng) installed on your system.
+
+```lua
+return {
+  datasources = {
+    prod = {
+      dsn = "mysql://user:password@db-internal:3306/myapp",
+      proxy = "socks5://127.0.0.1:1080",
+    },
+  },
+}
+```
+
+Supported proxy types: `socks4://host:port`, `socks5://host:port`.
+
+Environment variables work in the proxy field too: `proxy = "socks5://${PROXY_HOST}:${PROXY_PORT}"`.
+
 #### Environment Variable Expansion
 
 DSN strings support environment variable expansion using `${VAR_NAME}` syntax:

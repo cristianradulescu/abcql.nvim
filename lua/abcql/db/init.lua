@@ -23,8 +23,10 @@ function Database.setup(config)
   -- @TODO: Register other adapters like PostgreSQL, SQLite, etc.
 
   -- Register data sources from config
-  for name, dsn in pairs(config.datasources or {}) do
-    Database.connectionRegistry:register_datasource(name, dsn)
+  for name, ds_config in pairs(config.datasources or {}) do
+    local dsn = type(ds_config) == "string" and ds_config or ds_config.dsn
+    local proxy = type(ds_config) == "table" and ds_config.proxy or nil
+    Database.connectionRegistry:register_datasource(name, dsn, proxy)
   end
 end
 
