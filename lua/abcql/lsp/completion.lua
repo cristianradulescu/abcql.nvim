@@ -56,6 +56,9 @@ local SQL_KEYWORDS = {
   "ASC",
   "DESC",
   "USE",
+  "SHOW",
+  "SHOW CREATE TABLE",
+  "DESCRIBE",
 }
 
 --- LSP completion item kinds

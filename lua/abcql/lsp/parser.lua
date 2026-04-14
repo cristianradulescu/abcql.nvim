@@ -27,6 +27,8 @@ local TABLE_KEYWORDS = {
   "OUTER JOIN",
   "FULL JOIN",
   "CROSS JOIN",
+  "DESCRIBE",
+  "SHOW CREATE TABLE",
 }
 
 --- SQL keywords that should trigger column completion

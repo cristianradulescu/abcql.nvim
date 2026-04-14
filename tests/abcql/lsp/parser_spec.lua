@@ -88,6 +88,18 @@ describe("Parser", function()
       assert.are.equal("us", context.partial)
     end)
 
+    it("should detect TABLE context after DESCRIBE", function()
+      local context = Parser.parse_context("DESCRIBE us", 12)
+      assert.are.equal("TABLE", context.type)
+      assert.are.equal("us", context.partial)
+    end)
+
+    it("should detect TABLE context after SHOW CREATE TABLE", function()
+      local context = Parser.parse_context("SHOW CREATE TABLE us", 21)
+      assert.are.equal("TABLE", context.type)
+      assert.are.equal("us", context.partial)
+    end)
+
     it("should detect TABLE context with database qualifier", function()
       local context = Parser.parse_context("SELECT * FROM mydb.us", 22)
       assert.are.equal("TABLE", context.type)

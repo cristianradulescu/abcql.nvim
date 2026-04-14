@@ -120,8 +120,8 @@ function LSP:start_server(bufnr, datasource, callback)
     end,
   }, {
     bufnr = bufnr,
-    reuse_client = function(client, config)
-      return client.name == "abcql-lsp" and client.config.root_dir == config.root_dir
+    reuse_client = function()
+      return false
     end,
   })
 

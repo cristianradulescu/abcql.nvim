@@ -4,6 +4,8 @@
 -- Set buffer-local options
 vim.opt_local.commentstring = "-- %s"
 
+require("abcql.sql_highlight").attach(vim.api.nvim_get_current_buf())
+
 -- Update winbar to show abcql is active, connected data source and database
 local db_ok, Database = pcall(require, "abcql.db")
 if not db_ok then
