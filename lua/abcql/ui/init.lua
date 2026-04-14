@@ -1,7 +1,7 @@
 ---@class abcql.UI
 local UI = {}
 
----@alias abcql.UI.LayoutOpts { editor_buf: number? }
+---@alias abcql.UI.LayoutOpts { editor_buf: number?, editor_buf_owned: boolean? }
 
 -- Augroup for all UI-related autocmds (WinClosed, BufEnter guards)
 local AUGROUP = vim.api.nvim_create_augroup("abcql_ui", { clear = true })
@@ -11,6 +11,7 @@ local AUGROUP = vim.api.nvim_create_augroup("abcql_ui", { clear = true })
 local state = {
   -- Buffer IDs for the main components
   editor_buf = nil,
+  editor_buf_owned = false,
   results_buf = nil,
   datasource_tree_buf = nil,
 
@@ -368,13 +369,13 @@ function UI.open(opts)
       }, function(choice)
         if choice == "Yes" then
           local scratch_buf = create_editor_buffer()
-          UI.open({ editor_buf = scratch_buf })
+          UI.open({ editor_buf = scratch_buf, editor_buf_owned = true })
         end
       end)
 
       return
     else
-      UI.open({ editor_buf = current_buf })
+      UI.open({ editor_buf = current_buf, editor_buf_owned = false })
 
       return
     end
@@ -389,6 +390,7 @@ function UI.open(opts)
   -- Set editor buffer based on provided buffer
   if opts.editor_buf ~= nil and vim.api.nvim_buf_is_valid(opts.editor_buf) then
     state.editor_buf = opts.editor_buf
+    state.editor_buf_owned = opts.editor_buf_owned == true
   else
     vim.notify("abcql UI is missing the query editor", vim.log.levels.ERROR)
     return
@@ -531,7 +533,8 @@ function UI.open(opts)
 end
 
 --- Close the ABCQL UI
---- Closes all windows and deletes all buffers associated with the UI
+--- Closes all abcql windows. Keeps externally owned editor buffers, and
+--- deletes the editor buffer only when abcql created a temporary one.
 function UI.close()
   -- Clear all UI autocmds first to prevent re-entrant callbacks
   vim.api.nvim_clear_autocmds({ group = AUGROUP })
@@ -545,8 +548,19 @@ function UI.close()
     vim.api.nvim_set_option_value("winfixwidth", false, { win = state.datasource_tree_win })
   end
 
-  -- Delete all buffers if they exist and are valid
-  if state.editor_buf and vim.api.nvim_buf_is_valid(state.editor_buf) then
+  -- Close abcql side windows first
+  if state.results_win and vim.api.nvim_win_is_valid(state.results_win) then
+    vim.api.nvim_win_close(state.results_win, false)
+  end
+
+  if state.datasource_tree_win and vim.api.nvim_win_is_valid(state.datasource_tree_win) then
+    vim.api.nvim_win_close(state.datasource_tree_win, false)
+  end
+
+  -- Editor ownership semantics:
+  -- - Keep existing user buffers (opened before abcql)
+  -- - Delete only temporary editor buffers created by abcql itself
+  if state.editor_buf_owned and state.editor_buf and vim.api.nvim_buf_is_valid(state.editor_buf) then
     vim.api.nvim_buf_delete(state.editor_buf, { force = true })
   end
 
@@ -560,6 +574,7 @@ function UI.close()
 
   -- Reset state
   state.editor_buf = nil
+  state.editor_buf_owned = false
   state.results_buf = nil
   state.datasource_tree_buf = nil
   state.editor_win = nil
