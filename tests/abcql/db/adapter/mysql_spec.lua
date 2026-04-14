@@ -37,15 +37,18 @@ describe("MySQLAdapter", function()
       local args = adapter:get_args("SELECT 1")
 
       assert.is_table(args)
-      assert.are.equal("-hlocalhost", args[1])
-      assert.are.equal("-P3306", args[2])
-      assert.are.equal("-utestuser", args[3])
-      assert.are.equal("-ptestpass", args[4])
-      assert.are.equal("-Dtestdb", args[5])
-      assert.are.equal("--batch", args[6])
-      assert.are.equal("--default-character-set=utf8mb4", args[7])
-      assert.are.equal("-e", args[8])
-      assert.are.equal("SELECT 1", args[9])
+      assert.is_true(vim.tbl_contains(args, "-hlocalhost"))
+      assert.is_true(vim.tbl_contains(args, "-P3306"))
+      assert.is_true(vim.tbl_contains(args, "-utestuser"))
+      assert.is_true(vim.tbl_contains(args, "-Dtestdb"))
+      assert.is_true(vim.tbl_contains(args, "--batch"))
+      assert.is_true(vim.tbl_contains(args, "--default-character-set=utf8mb4"))
+      assert.is_true(vim.tbl_contains(args, "-e"))
+      assert.are.equal("SELECT 1", args[#args])
+
+      for _, arg in ipairs(args) do
+        assert.is_nil(arg:match("^%-p"))
+      end
     end)
 
     it("should generate args without password", function()
@@ -95,8 +98,8 @@ describe("MySQLAdapter", function()
 
       local args = adapter_defaults:get_args("SELECT 1")
 
-      assert.are.equal("-hlocalhost", args[1])
-      assert.are.equal("-P3306", args[2])
+      assert.is_true(vim.tbl_contains(args, "-hlocalhost"))
+      assert.is_true(vim.tbl_contains(args, "-P3306"))
     end)
 
     it("should always include --batch flag", function()
@@ -226,6 +229,60 @@ describe("MySQLAdapter", function()
       local args = adapter:get_args(query)
 
       assert.are.equal(query, args[#args])
+    end)
+
+    it("should prepare command with defaults-extra-file when password exists", function()
+      local prepared, err = adapter:prepare_command("SELECT 1")
+
+      assert.is_nil(err)
+      assert.is_table(prepared)
+      assert.are.equal("mysql", prepared.cmd)
+      assert.is_true(type(prepared.cleanup) == "function")
+
+      local has_defaults_file = false
+      local defaults_path = nil
+      for _, arg in ipairs(prepared.args) do
+        if arg:match("^%-%-defaults%-extra%-file=") then
+          has_defaults_file = true
+          defaults_path = arg:match("^%-%-defaults%-extra%-file=(.+)$")
+        end
+        assert.is_nil(arg:match("^%-p"))
+      end
+
+      assert.is_true(has_defaults_file)
+      assert.is_not_nil(defaults_path)
+
+      prepared.cleanup()
+
+      if defaults_path then
+        local stat = vim.uv.fs_stat(defaults_path)
+        assert.is_nil(stat)
+      end
+    end)
+
+    it("should prepare command without defaults file when password is missing", function()
+      local adapter_no_pass = MySQLAdapter.new({
+        host = "localhost",
+        port = 3306,
+        user = "testuser",
+        database = "testdb",
+      })
+
+      local prepared, err = adapter_no_pass:prepare_command("SELECT 1")
+
+      assert.is_nil(err)
+      assert.is_table(prepared)
+      assert.are.equal("mysql", prepared.cmd)
+      assert.is_nil(prepared.cleanup)
+
+      local has_defaults_file = false
+      for _, arg in ipairs(prepared.args) do
+        if arg:match("^%-%-defaults%-extra%-file=") then
+          has_defaults_file = true
+        end
+      end
+
+      assert.is_false(has_defaults_file)
     end)
   end)
 

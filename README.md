@@ -107,6 +107,36 @@ return {
 }
 ```
 
+#### Linux Keyring Secrets (secret-tool)
+
+On Linux (GNOME Keyring / Secret Service), you can keep database passwords out of config files and environment variables.
+
+1. Store the secret in keyring:
+
+```bash
+secret-tool store --label="abcql prod password" service abcql account prod-db-password
+```
+
+2. Reference it from datasource config:
+
+```lua
+return {
+  datasources = {
+    prod = {
+      dsn = "mysql://user@db-internal:3306/myapp",
+      secret = {
+        service = "abcql",
+        account = "prod-db-password",
+      },
+    },
+  },
+}
+```
+
+`provider` is optional and defaults to `"secret-tool"`.
+
+> **Requirements:** install `secret-tool` (package `libsecret-tools` on Debian/Ubuntu).
+
 #### Datasource Commands
 
 - `:AbcqlInitConfig` - Create a template `.abcql.lua` in the current directory
@@ -117,6 +147,21 @@ return {
 ---
 
 ## Usage
+
+### Healthcheck
+
+Run Neovim's built-in healthcheck for abcql:
+
+```vim
+:checkhealth abcql
+```
+
+It validates:
+
+- Required CLI dependencies (`mysql`)
+- Optional JSON export dependency (`jq`)
+- Datasource config structure
+- Linux keyring secret configuration and lookup (`secret-tool`) when `secret` refs are configured
 
 ### SQL Completion (LSP)
 

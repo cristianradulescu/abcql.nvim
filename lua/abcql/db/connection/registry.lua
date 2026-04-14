@@ -23,13 +23,36 @@ function Registry:register_adapter(scheme, adapter_class)
   self.adapters[scheme:lower()] = adapter_class
 end
 
+--- Resolve password from secret reference when configured
+--- @param dsn string
+--- @param secret table|nil
+--- @return string|nil password
+--- @return string|nil error
+local function resolve_password(dsn, secret)
+  if not secret then
+    local parsed, err = require("abcql.db.connection.dsn").parse_dsn(dsn)
+    if not parsed then
+      return nil, err
+    end
+    return parsed.password, nil
+  end
+
+  local keyring_password, keyring_err = require("abcql.secret").lookup(secret)
+  if keyring_err then
+    return nil, "Failed to resolve keyring secret: " .. keyring_err
+  end
+
+  return keyring_password, nil
+end
+
 --- Register a data source name (DSN) with a friendly name
 --- @param name string The friendly name for the data source
 --- @param dsn string The data source name (DSN) string
 --- @param proxy? string SOCKS proxy URL (e.g., "socks5://localhost:1080")
+--- @param secret? table Secret reference for keyring lookup
 --- @return Datasource|nil The registered data source if successful, nil otherwise
 --- @return string|nil Error message if registration failed
-function Registry:register_datasource(name, dsn, proxy)
+function Registry:register_datasource(name, dsn, proxy, secret)
   -- Check if data source already exists
   if self.datasources[name] then
     return self.datasources[name], nil
@@ -39,6 +62,11 @@ function Registry:register_datasource(name, dsn, proxy)
   local parsed, err = require("abcql.db.connection.dsn").parse_dsn(dsn)
   if not parsed then
     return nil, err
+  end
+
+  local password, secret_err = resolve_password(dsn, secret)
+  if secret_err then
+    return nil, secret_err
   end
 
   -- Find adapter for scheme
@@ -52,7 +80,7 @@ function Registry:register_datasource(name, dsn, proxy)
     host = parsed.host,
     port = parsed.port,
     user = parsed.user,
-    password = parsed.password,
+    password = password,
     database = parsed.database,
     options = parsed.options,
     proxy = proxy,

@@ -26,7 +26,8 @@ function Database.setup(config)
   for name, ds_config in pairs(config.datasources or {}) do
     local dsn = type(ds_config) == "string" and ds_config or ds_config.dsn
     local proxy = type(ds_config) == "table" and ds_config.proxy or nil
-    Database.connectionRegistry:register_datasource(name, dsn, proxy)
+    local secret = type(ds_config) == "table" and ds_config.secret or nil
+    Database.connectionRegistry:register_datasource(name, dsn, proxy, secret)
   end
 end
 

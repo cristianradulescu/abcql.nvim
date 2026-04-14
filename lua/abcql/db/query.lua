@@ -11,9 +11,23 @@ local Query = {}
 function Query.execute_async(adapter, query, callback, opts)
   opts = opts or {}
 
+  local cleanup = nil
+
   -- Get CLI command and arguments from adapter
-  local cmd = adapter:get_command()
-  local args = adapter:get_args(query, opts)
+  local cmd, args
+  if adapter.prepare_command then
+    local prepared, prep_err = adapter:prepare_command(query, opts)
+    if not prepared then
+      callback(nil, prep_err or "Failed to prepare command")
+      return
+    end
+    cmd = prepared.cmd
+    args = prepared.args
+    cleanup = prepared.cleanup
+  else
+    cmd = adapter:get_command()
+    args = adapter:get_args(query, opts)
+  end
 
   -- Detect if this is a write query
   local is_write = adapter.is_write_query and adapter:is_write_query(query) or false
@@ -32,6 +46,9 @@ function Query.execute_async(adapter, query, callback, opts)
       -- Check for execution errors
       if result.code ~= 0 then
         local error_msg = result.stderr or "Command failed with exit code " .. result.code
+        if cleanup then
+          pcall(cleanup)
+        end
         callback(nil, error_msg)
         return
       end
@@ -40,10 +57,16 @@ function Query.execute_async(adapter, query, callback, opts)
       if is_write and adapter.parse_write_output then
         local ok, write_result = pcall(adapter.parse_write_output, adapter, result.stdout or "")
         if not ok then
+          if cleanup then
+            pcall(cleanup)
+          end
           callback(nil, "Failed to parse write output: " .. tostring(write_result))
           return
         end
 
+        if cleanup then
+          pcall(cleanup)
+        end
         callback({
           headers = {},
           rows = {},
@@ -61,6 +84,9 @@ function Query.execute_async(adapter, query, callback, opts)
       -- Parse output using adapter (for SELECT queries)
       local ok, parsed = pcall(adapter.parse_output, adapter, result.stdout or "")
       if not ok then
+        if cleanup then
+          pcall(cleanup)
+        end
         callback(nil, "Failed to parse output: " .. tostring(parsed))
         return
       end
@@ -80,6 +106,9 @@ function Query.execute_async(adapter, query, callback, opts)
         end
       end
 
+      if cleanup then
+        pcall(cleanup)
+      end
       callback({
         headers = headers,
         rows = rows,
@@ -100,8 +129,21 @@ end
 function Query.execute_sync(adapter, query, opts)
   opts = opts or {}
 
-  local cmd = adapter:get_command()
-  local args = adapter:get_args(query, opts)
+  local cleanup = nil
+
+  local cmd, args
+  if adapter.prepare_command then
+    local prepared, prep_err = adapter:prepare_command(query, opts)
+    if not prepared then
+      return nil, prep_err or "Failed to prepare command"
+    end
+    cmd = prepared.cmd
+    args = prepared.args
+    cleanup = prepared.cleanup
+  else
+    cmd = adapter:get_command()
+    args = adapter:get_args(query, opts)
+  end
 
   -- Detect if this is a write query
   local is_write = adapter.is_write_query and adapter:is_write_query(query) or false
@@ -122,6 +164,9 @@ function Query.execute_sync(adapter, query, opts)
 
   if result.code ~= 0 then
     local error_msg = result.stderr or "Command failed with exit code " .. result.code
+    if cleanup then
+      pcall(cleanup)
+    end
     return nil, error_msg
   end
 
@@ -129,9 +174,15 @@ function Query.execute_sync(adapter, query, opts)
   if is_write and adapter.parse_write_output then
     local ok, write_result = pcall(adapter.parse_write_output, adapter, result.stdout or "")
     if not ok then
+      if cleanup then
+        pcall(cleanup)
+      end
       return nil, "Failed to parse write output: " .. tostring(write_result)
     end
 
+    if cleanup then
+      pcall(cleanup)
+    end
     return {
       headers = {},
       rows = {},
@@ -148,6 +199,9 @@ function Query.execute_sync(adapter, query, opts)
 
   local ok, parsed = pcall(adapter.parse_output, adapter, result.stdout or "")
   if not ok then
+    if cleanup then
+      pcall(cleanup)
+    end
     return nil, "Failed to parse output: " .. tostring(parsed)
   end
 
@@ -165,6 +219,9 @@ function Query.execute_sync(adapter, query, opts)
     end
   end
 
+  if cleanup then
+    pcall(cleanup)
+  end
   return {
     headers = headers,
     rows = rows,

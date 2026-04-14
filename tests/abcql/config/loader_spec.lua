@@ -126,6 +126,27 @@ describe("Config Loader", function()
     end)
   end)
 
+  describe("get_datasource_configs", function()
+    it("should include secret metadata when present", function()
+      local loaded = {
+        prod = {
+          dsn = "mysql://user@localhost/db",
+          proxy = "socks5://127.0.0.1:1080",
+          secret = { service = "abcql", account = "prod-db-password" },
+          source = "local",
+        },
+      }
+
+      local result = Loader.get_datasource_configs(loaded)
+
+      assert.are.equal("mysql://user@localhost/db", result.prod.dsn)
+      assert.are.equal("socks5://127.0.0.1:1080", result.prod.proxy)
+      assert.is_table(result.prod.secret)
+      assert.are.equal("abcql", result.prod.secret.service)
+      assert.are.equal("prod-db-password", result.prod.secret.account)
+    end)
+  end)
+
   describe("load_all_datasources", function()
     it("should include setup datasources", function()
       local setup_ds = {
@@ -159,6 +180,25 @@ describe("Config Loader", function()
     it("should handle nil setup datasources", function()
       local result = Loader.load_all_datasources(nil)
       assert.is_table(result)
+    end)
+
+    it("should preserve secret metadata in table datasource", function()
+      local setup_ds = {
+        prod = {
+          dsn = "mysql://user@localhost:3306/test",
+          secret = {
+            service = "abcql",
+            account = "prod-password",
+          },
+        },
+      }
+
+      local result = Loader.load_all_datasources(setup_ds)
+
+      assert.are.equal("mysql://user@localhost:3306/test", result.prod.dsn)
+      assert.is_table(result.prod.secret)
+      assert.are.equal("abcql", result.prod.secret.service)
+      assert.are.equal("prod-password", result.prod.secret.account)
     end)
   end)
 

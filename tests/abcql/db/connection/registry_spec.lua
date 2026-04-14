@@ -93,4 +93,102 @@ describe("ConnectionRegistry", function()
       registry:register_adapter("mysql", MockAdapter)
     end)
   end)
+
+  describe("register_datasource", function()
+    local dsn_module
+    local secret_module
+    local original_require
+
+    before_each(function()
+      dsn_module = {
+        parse_dsn = function()
+          return {
+            scheme = "mysql",
+            host = "localhost",
+            port = 3306,
+            user = "user",
+            password = "dsnpass",
+            database = "db",
+            options = {},
+          }, nil
+        end,
+      }
+
+      secret_module = {
+        lookup = function()
+          return "keyringpass", nil
+        end,
+      }
+
+      original_require = _G.require
+      _G.require = function(mod)
+        if mod == "abcql.db.connection.dsn" then
+          return dsn_module
+        end
+        if mod == "abcql.secret" then
+          return secret_module
+        end
+        return original_require(mod)
+      end
+    end)
+
+    after_each(function()
+      _G.require = original_require
+    end)
+
+    it("uses DSN password when no secret is configured", function()
+      local captured
+      local MockAdapter = {
+        new = function(config)
+          captured = config
+          return { config = config }
+        end,
+      }
+      registry:register_adapter("mysql", MockAdapter)
+
+      local ds, err = registry:register_datasource("dev", "mysql://user:dsnpass@localhost:3306/db", nil, nil)
+      assert.is_nil(err)
+      assert.is_table(ds)
+      assert.are.equal("dsnpass", captured.password)
+    end)
+
+    it("uses keyring password when secret is configured", function()
+      local captured
+      local MockAdapter = {
+        new = function(config)
+          captured = config
+          return { config = config }
+        end,
+      }
+      registry:register_adapter("mysql", MockAdapter)
+
+      local ds, err = registry:register_datasource("prod", "mysql://user@localhost:3306/db", nil, {
+        service = "abcql",
+        account = "prod-db-password",
+      })
+      assert.is_nil(err)
+      assert.is_table(ds)
+      assert.are.equal("keyringpass", captured.password)
+    end)
+
+    it("returns error when keyring lookup fails", function()
+      secret_module.lookup = function()
+        return nil, "secret lookup failed"
+      end
+
+      local MockAdapter = {
+        new = function(config)
+          return { config = config }
+        end,
+      }
+      registry:register_adapter("mysql", MockAdapter)
+
+      local ds, err = registry:register_datasource("prod", "mysql://user@localhost:3306/db", nil, {
+        service = "abcql",
+        account = "prod-db-password",
+      })
+      assert.is_nil(ds)
+      assert.is_truthy(err:match("Failed to resolve keyring secret"))
+    end)
+  end)
 end)

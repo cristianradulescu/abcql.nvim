@@ -32,10 +32,6 @@ function MySQLAdapter:get_args(query, opts)
     "-u" .. (self.config.user or "root"),
   }
 
-  if self.config.password then
-    table.insert(args, "-p" .. self.config.password)
-  end
-
   -- Use opts.database if provided, otherwise fall back to config.database
   local database = opts.database or self.config.database
   if database then
@@ -59,6 +55,67 @@ function MySQLAdapter:get_args(query, opts)
   table.insert(args, query)
 
   return args
+end
+
+--- Create a temporary mysql defaults file for secure password passing
+--- @return string|nil path Path to temp file
+--- @return string|nil err Error if file creation failed
+local function create_mysql_defaults_file(config)
+  local path = os.tmpname()
+  local file, err = io.open(path, "w")
+  if not file then
+    return nil, err
+  end
+
+  file:write("[client]\n")
+  if config.user then
+    file:write("user=", config.user, "\n")
+  end
+  if config.password then
+    file:write("password=", config.password, "\n")
+  end
+  if config.host then
+    file:write("host=", config.host, "\n")
+  end
+  if config.port then
+    file:write("port=", tostring(config.port), "\n")
+  end
+  file:close()
+
+  if vim.uv and vim.uv.fs_chmod then
+    vim.uv.fs_chmod(path, 384) -- 0600
+  end
+
+  return path, nil
+end
+
+--- Prepare command execution with optional secure password transport
+--- @param query string
+--- @param opts table|nil
+--- @return table|nil prepared { cmd: string, args: table, cleanup?: function }
+--- @return string|nil err
+function MySQLAdapter:prepare_command(query, opts)
+  local args = self:get_args(query, opts)
+  local cmd = self:get_command()
+
+  if not self.config.password then
+    return { cmd = cmd, args = args }, nil
+  end
+
+  local defaults_file, file_err = create_mysql_defaults_file(self.config)
+  if not defaults_file then
+    return nil, "Failed to create mysql defaults file: " .. tostring(file_err)
+  end
+
+  table.insert(args, 1, "--defaults-extra-file=" .. defaults_file)
+
+  return {
+    cmd = cmd,
+    args = args,
+    cleanup = function()
+      pcall(os.remove, defaults_file)
+    end,
+  }, nil
 end
 
 --- Execute a query with possible asynchronous callback
