@@ -14,7 +14,7 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
 - Connect to MySQL databases via connection strings
 - Manage multiple datasources/environments
 - Interactive query execution with results in split windows  
-- Schema and table explorer
+- Schema and table explorer (toggle with `<leader>ST`; hidden by default)
 - Export query results to CSV, TSV, and JSON formats
 - SQL completion with LSP support (databases, tables, columns, keywords)
 

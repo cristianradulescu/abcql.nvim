@@ -351,7 +351,8 @@ local function setup_tree_keymaps(buf)
 end
 
 --- Open the abcql UI
---- Creates a three-panel layout: query editor (top), results (bottom), data source tree (right)
+--- Creates a two-panel layout by default: query editor (top), results (bottom)
+--- The data source tree panel can be opened with UI.toggle_tree()
 --- The layout uses splits with winfixbuf to prevent buffer mixing
 --- @param opts? abcql.UI.LayoutOpts Optional parameters
 function UI.open(opts)
@@ -393,9 +394,9 @@ function UI.open(opts)
     return
   end
 
-  local results_win_opts, datasource_win_opts
+  local results_win_opts
   state.results_buf, results_win_opts = create_results_buffer()
-  state.datasource_tree_buf, datasource_win_opts = create_data_source_tree_buffer()
+  state.datasource_tree_buf = create_data_source_tree_buffer()
 
   setup_results_keymaps(state.results_buf)
   setup_tree_keymaps(state.datasource_tree_buf)
@@ -409,12 +410,11 @@ function UI.open(opts)
 
   -- Create the window layout
   -- Layout structure:
-  --   +-------------------+-------+
-  --   | Query Editor      | Tree  |
-  --   |                   |       |
-  --   +-------------------+       |
-  --   | Query Results     |       |
-  --   +-------------------+-------+
+  --   +---------------------------+
+  --   | Query Editor              |
+  --   +---------------------------+
+  --   | Query Results             |
+  --   +---------------------------+
 
   -- The current window will become the editor window
   -- Don't hijack floating windows — create a new normal window first
@@ -427,13 +427,6 @@ function UI.open(opts)
 
   state.editor_win = cur_win
   vim.api.nvim_win_set_buf(state.editor_win, state.editor_buf)
-
-  -- Create vertical split on the right for the data source tree (30 columns wide)
-  vim.cmd("vertical rightbelow split")
-  state.datasource_tree_win = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(state.datasource_tree_win, state.datasource_tree_buf)
-  vim.api.nvim_win_set_width(state.datasource_tree_win, 50)
-  datasource_win_opts(state.datasource_tree_win)
 
   -- Go back to the editor window and create horizontal split below for results
   vim.api.nvim_set_current_win(state.editor_win)
@@ -454,12 +447,10 @@ function UI.open(opts)
   -- should allow the editor window to be reused with other buffers
   -- winfixwidth/winfixheight prevent accidental resizing via window commands
   vim.api.nvim_set_option_value("winfixbuf", true, { win = state.results_win })
-  vim.api.nvim_set_option_value("winfixbuf", true, { win = state.datasource_tree_win })
-  vim.api.nvim_set_option_value("winfixwidth", true, { win = state.datasource_tree_win })
 
   -- Initialize visibility state
   state.results_visible = true
-  state.data_source_tree_visible = true
+  state.data_source_tree_visible = false
 
   -- Register WinClosed autocmds to sync state when windows are closed externally
   vim.api.nvim_create_autocmd("WinClosed", {
@@ -483,15 +474,17 @@ function UI.open(opts)
     end,
   })
 
-  vim.api.nvim_create_autocmd("WinClosed", {
-    group = AUGROUP,
-    pattern = tostring(state.datasource_tree_win),
-    once = true,
-    callback = function()
-      state.datasource_tree_win = nil
-      state.data_source_tree_visible = false
-    end,
-  })
+  if state.datasource_tree_win and vim.api.nvim_win_is_valid(state.datasource_tree_win) then
+    vim.api.nvim_create_autocmd("WinClosed", {
+      group = AUGROUP,
+      pattern = tostring(state.datasource_tree_win),
+      once = true,
+      callback = function()
+        state.datasource_tree_win = nil
+        state.data_source_tree_visible = false
+      end,
+    })
+  end
 
   -- BufEnter guard: redirect foreign buffers away from results/tree windows
   vim.api.nvim_create_autocmd("BufEnter", {
@@ -652,10 +645,26 @@ function UI.toggle_tree()
 
       -- Set window width and options
       vim.api.nvim_win_set_width(state.datasource_tree_win, 30)
+      vim.api.nvim_set_option_value("wrap", false, { win = state.datasource_tree_win, scope = "local" })
+      vim.api.nvim_set_option_value("number", false, { win = state.datasource_tree_win, scope = "local" })
+      vim.api.nvim_set_option_value("relativenumber", false, { win = state.datasource_tree_win, scope = "local" })
+      vim.api.nvim_set_option_value("spell", false, { win = state.datasource_tree_win, scope = "local" })
+      vim.api.nvim_set_option_value("signcolumn", "no", { win = state.datasource_tree_win, scope = "local" })
+      vim.api.nvim_set_option_value("colorcolumn", "", { win = state.datasource_tree_win, scope = "local" })
       vim.api.nvim_set_option_value("winfixbuf", true, { win = state.datasource_tree_win })
       vim.api.nvim_set_option_value("winfixwidth", true, { win = state.datasource_tree_win })
 
       state.data_source_tree_visible = true
+
+      vim.api.nvim_create_autocmd("WinClosed", {
+        group = AUGROUP,
+        pattern = tostring(state.datasource_tree_win),
+        once = true,
+        callback = function()
+          state.datasource_tree_win = nil
+          state.data_source_tree_visible = false
+        end,
+      })
 
       -- Restore focus to the window that was current before toggling
       if current_win and vim.api.nvim_win_is_valid(current_win) then

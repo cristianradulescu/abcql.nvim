@@ -12,11 +12,11 @@ vim.g.loaded_abcql = true
 -- These commands are always available once the plugin is loaded
 
 --- Open the ABCQL UI
---- Creates a three-panel layout with query editor, results panel, and data source tree
+--- Creates a two-panel layout with query editor and results (tree hidden by default)
 vim.api.nvim_create_user_command("AbcqlOpen", function()
   require("abcql.ui").open()
 end, {
-  desc = "Open ABCQL UI with query editor, results panel, and data source tree",
+  desc = "Open ABCQL UI with query editor and results panel",
 })
 
 --- Close the ABCQL UI
