@@ -35,8 +35,10 @@ local state = {
 --- Check if the UI layout is valid (editor window exists and is usable)
 --- @return boolean
 function UI.is_valid()
-  return state.editor_win ~= nil and vim.api.nvim_win_is_valid(state.editor_win)
-    and state.editor_buf ~= nil and vim.api.nvim_buf_is_valid(state.editor_buf)
+  return state.editor_win ~= nil
+    and vim.api.nvim_win_is_valid(state.editor_win)
+    and state.editor_buf ~= nil
+    and vim.api.nvim_buf_is_valid(state.editor_buf)
 end
 
 --- Create the query editor buffer
@@ -498,13 +500,16 @@ function UI.open(opts)
       -- Check if a foreign buffer entered the results window
       if win == state.results_win and buf ~= state.results_buf then
         vim.schedule(function()
-          if state.results_win and vim.api.nvim_win_is_valid(state.results_win)
-            and state.results_buf and vim.api.nvim_buf_is_valid(state.results_buf) then
+          if
+            state.results_win
+            and vim.api.nvim_win_is_valid(state.results_win)
+            and state.results_buf
+            and vim.api.nvim_buf_is_valid(state.results_buf)
+          then
             vim.api.nvim_win_set_buf(state.results_win, state.results_buf)
           end
           -- Redirect the intruding buffer to the editor window
-          if state.editor_win and vim.api.nvim_win_is_valid(state.editor_win)
-            and vim.api.nvim_buf_is_valid(buf) then
+          if state.editor_win and vim.api.nvim_win_is_valid(state.editor_win) and vim.api.nvim_buf_is_valid(buf) then
             vim.api.nvim_win_set_buf(state.editor_win, buf)
             vim.api.nvim_set_current_win(state.editor_win)
           end
@@ -515,13 +520,16 @@ function UI.open(opts)
       -- Check if a foreign buffer entered the tree window
       if win == state.datasource_tree_win and buf ~= state.datasource_tree_buf then
         vim.schedule(function()
-          if state.datasource_tree_win and vim.api.nvim_win_is_valid(state.datasource_tree_win)
-            and state.datasource_tree_buf and vim.api.nvim_buf_is_valid(state.datasource_tree_buf) then
+          if
+            state.datasource_tree_win
+            and vim.api.nvim_win_is_valid(state.datasource_tree_win)
+            and state.datasource_tree_buf
+            and vim.api.nvim_buf_is_valid(state.datasource_tree_buf)
+          then
             vim.api.nvim_win_set_buf(state.datasource_tree_win, state.datasource_tree_buf)
           end
           -- Redirect the intruding buffer to the editor window
-          if state.editor_win and vim.api.nvim_win_is_valid(state.editor_win)
-            and vim.api.nvim_buf_is_valid(buf) then
+          if state.editor_win and vim.api.nvim_win_is_valid(state.editor_win) and vim.api.nvim_buf_is_valid(buf) then
             vim.api.nvim_win_set_buf(state.editor_win, buf)
             vim.api.nvim_set_current_win(state.editor_win)
           end
@@ -582,7 +590,6 @@ function UI.close()
   state.datasource_tree_win = nil
   state.results_visible = false
   state.data_source_tree_visible = false
-
 
   vim.notify("Closed abcql UI", vim.log.levels.INFO)
 end
@@ -789,6 +796,9 @@ function UI.display(results, results_title, opts)
       highlights.apply_query_highlights(buf, query_line_count)
     end
     highlights.apply_error_highlights(buf, query_line_count, #lines)
+    if state.results_win and vim.api.nvim_win_is_valid(state.results_win) then
+      vim.api.nvim_win_set_cursor(state.results_win, { 1, 0 })
+    end
     return
   end
 
@@ -831,6 +841,9 @@ function UI.display(results, results_title, opts)
       highlights.apply_query_highlights(buf, query_line_count)
     end
     highlights.apply_write_highlights(buf, query_line_count, #lines)
+    if state.results_win and vim.api.nvim_win_is_valid(state.results_win) then
+      vim.api.nvim_win_set_cursor(state.results_win, { 1, 0 })
+    end
     return
   end
 
@@ -839,6 +852,9 @@ function UI.display(results, results_title, opts)
     table.insert(lines, "No results")
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
     vim.bo[buf].modifiable = false
+    if state.results_win and vim.api.nvim_win_is_valid(state.results_win) then
+      vim.api.nvim_win_set_cursor(state.results_win, { 1, 0 })
+    end
     return
   end
 
@@ -892,6 +908,11 @@ function UI.display(results, results_title, opts)
   -- Highlight footer lines
   for i = table_end_line + 1, #lines - 1 do
     highlights.apply_footer_highlight(buf, i)
+  end
+
+  -- Reset scroll to top-left
+  if state.results_win and vim.api.nvim_win_is_valid(state.results_win) then
+    vim.api.nvim_win_set_cursor(state.results_win, { 1, 0 })
   end
 end
 
