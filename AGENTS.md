@@ -39,6 +39,16 @@ nvim --headless --noplugin -u tests/minimal_init.lua \
   -c "PlenaryBustedFile tests/abcql/config_spec.lua"
 ```
 
+## Employees Test Database (docker)
+
+`compose.yml` + `docker/load-employees.sh` spin up MySQL and import
+[datacharmer/test_db](https://github.com/datacharmer/test_db)'s `employees` database (6 tables, ~300k
+rows) for manually exercising the tree/completion/results UI against a richer schema than `bookstore`.
+Not used by `make test`. See `docker/README.md`; quick start: `make test-db-up`.
+
+`examples/.abcql.lua` (datasource pointing at this container) and `examples/queries.sql` (sample
+`SELECT`s against it) are ready to copy/open for manual testing — see "Trying it Out" in `README.md`.
+
 ## Architecture
 
 - `lua/abcql/init.lua` — plugin entry point

@@ -148,6 +148,19 @@ return {
 
 ## Usage
 
+### Trying it Out
+
+No database handy? `make test-db-up` spins up a MySQL container preloaded with the
+[employees sample database](https://github.com/datacharmer/test_db) (see `docker/README.md`). Then:
+
+```sh
+cp examples/.abcql.lua .abcql.lua
+nvim examples/queries.sql
+```
+
+Open abcql (`:AbcqlOpen`), activate the `employees` datasource (`<leader>SD`), and run one of the
+sample queries with `<leader>Se`.
+
 ### Healthcheck
 
 Run Neovim's built-in healthcheck for abcql:

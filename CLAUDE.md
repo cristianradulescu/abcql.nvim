@@ -23,6 +23,10 @@ Tests run via `PlenaryBustedDirectory` against `tests/minimal_init.lua` (auto-cl
 `tests/minimal_test.lua`, a headless smoke test against a real `mysql` connection
 (`mysql://dbuser:dbpassword@localhost:3306/bookstore`) — it needs that server reachable to pass.
 
+`make test-db-up` starts a separate `compose.yml` stack (see `docker/README.md`) that loads
+datacharmer/test_db's `employees` database — a richer schema for manually testing the tree/completion/
+results UI. It's unrelated to the `bookstore` fixture above and not part of `make test`.
+
 To run a single spec file directly:
 
 ```bash
