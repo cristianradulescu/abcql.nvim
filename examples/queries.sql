@@ -1,20 +1,23 @@
-show databases;
+SHOW DATABASES;
 
-show tables;
+SHOW TABLES;
 
-select * from employees limit 100;
+DESCRIBE employees;
+SHOW CREATE TABLE employees;
 
-select * from departments limit 100;
+SELECT * FROM employees LIMIT 100;
 
-select * from titles limit 100;
+SELECT * FROM departments LIMIT 100;
 
-select
+SELECT * FROM titles LIMIT 100;
+
+SELECT
   e.emp_no,
   e.first_name,
   e.last_name,
   d.dept_no,
   d.dept_name
-from employees e
-join dept_emp de on de.emp_no = e.emp_no
-join departments d on d.dept_no = de.dept_no
-limit 10;
+FROM employees e
+JOIN dept_emp de ON de.emp_no = e.emp_no
+JOIN departments d ON d.dept_no = de.dept_no
+LIMIT 10;
