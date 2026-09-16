@@ -1,235 +1,60 @@
+local Backend = require("abcql.backend")
+
 ---@class abcql.db.Query
 local Query = {}
 
 ---@alias QueryResult { headers: string[], rows: table[], row_count: number, query_type: string?, affected_rows: number?, matched_rows: number?, changed_rows: number?, warnings: number?, duration_ms: number? }
 
---- Execute a query asynchronously using vim.system
+--- Map a raw abcql-backend response into the QueryResult shape used by the rest of the plugin
+--- @param response table Decoded JSON response from abcql-backend
+--- @return QueryResult
+local function to_query_result(response)
+  return {
+    headers = response.headers or {},
+    rows = response.rows or {},
+    row_count = response.row_count or 0,
+    query_type = response.query_type,
+    affected_rows = response.affected_rows,
+    matched_rows = response.matched_rows,
+    changed_rows = response.changed_rows,
+    warnings = response.warnings,
+    duration_ms = response.duration_ms,
+  }
+end
+
+--- Execute a query asynchronously via abcql-backend
 --- @param adapter abcql.db.adapter.Adapter The database adapter
 --- @param query string The SQL query to execute
 --- @param callback fun(results: QueryResult|nil, err: string|nil) Called with parsed results or error
---- @param opts? table Optional parameters passed to adapter's get_args
+--- @param opts? table Optional parameters passed to adapter's build_backend_request
 function Query.execute_async(adapter, query, callback, opts)
-  opts = opts or {}
+  local request = adapter:build_backend_request(query, opts or {})
 
-  local cleanup = nil
-
-  -- Get CLI command and arguments from adapter
-  local cmd, args
-  if adapter.prepare_command then
-    local prepared, prep_err = adapter:prepare_command(query, opts)
-    if not prepared then
-      callback(nil, prep_err or "Failed to prepare command")
+  Backend.invoke(request, function(response, err)
+    if err then
+      callback(nil, err)
       return
     end
-    cmd = prepared.cmd
-    args = prepared.args
-    cleanup = prepared.cleanup
-  else
-    cmd = adapter:get_command()
-    args = adapter:get_args(query, opts)
-  end
 
-  -- Detect if this is a write query
-  local is_write = adapter.is_write_query and adapter:is_write_query(query) or false
-
-  -- Record start time
-  local start_time = vim.loop.hrtime()
-
-  -- Execute command asynchronously (wraps with proxychains if proxy is configured)
-  vim.system(adapter:build_command(cmd, args), {
-    text = true,
-    timeout = opts.timeout or 30000, -- 30 second default timeout
-  }, function(result)
-    vim.schedule(function()
-      -- Calculate execution time in milliseconds
-      local duration_ms = (vim.loop.hrtime() - start_time) / 1000000
-      -- Check for execution errors
-      if result.code ~= 0 then
-        local error_msg = result.stderr or "Command failed with exit code " .. result.code
-        if cleanup then
-          pcall(cleanup)
-        end
-        callback(nil, error_msg)
-        return
-      end
-
-      -- Handle write queries differently
-      if is_write and adapter.parse_write_output then
-        local ok, write_result = pcall(adapter.parse_write_output, adapter, result.stdout or "")
-        if not ok then
-          if cleanup then
-            pcall(cleanup)
-          end
-          callback(nil, "Failed to parse write output: " .. tostring(write_result))
-          return
-        end
-
-        if cleanup then
-          pcall(cleanup)
-        end
-        callback({
-          headers = {},
-          rows = {},
-          row_count = 0,
-          query_type = "write",
-          affected_rows = write_result.affected_rows,
-          matched_rows = write_result.matched_rows,
-          changed_rows = write_result.changed_rows,
-          warnings = write_result.warnings,
-          duration_ms = duration_ms,
-        }, nil)
-        return
-      end
-
-      -- Parse output using adapter (for SELECT queries)
-      local ok, parsed = pcall(adapter.parse_output, adapter, result.stdout or "")
-      if not ok then
-        if cleanup then
-          pcall(cleanup)
-        end
-        callback(nil, "Failed to parse output: " .. tostring(parsed))
-        return
-      end
-
-      -- Separate headers from rows (first row is usually headers)
-      local headers = {}
-      local rows = {}
-
-      if #parsed > 0 then
-        if not opts.skip_column_names then
-          headers = parsed[1]
-          for i = 2, #parsed do
-            table.insert(rows, parsed[i])
-          end
-        else
-          rows = parsed
-        end
-      end
-
-      if cleanup then
-        pcall(cleanup)
-      end
-      callback({
-        headers = headers,
-        rows = rows,
-        row_count = #rows,
-        query_type = "select",
-        duration_ms = duration_ms,
-      }, nil)
-    end)
+    callback(to_query_result(response), nil)
   end)
 end
 
---- Execute a query synchronously (blocking)
+--- Execute a query synchronously (blocking) via abcql-backend
 --- @param adapter abcql.db.adapter.Adapter The database adapter
 --- @param query string The SQL query to execute
 --- @param opts? table Optional parameters
 --- @return QueryResult|nil results Parsed results
 --- @return string|nil error Error message if failed
 function Query.execute_sync(adapter, query, opts)
-  opts = opts or {}
+  local request = adapter:build_backend_request(query, opts or {})
 
-  local cleanup = nil
-
-  local cmd, args
-  if adapter.prepare_command then
-    local prepared, prep_err = adapter:prepare_command(query, opts)
-    if not prepared then
-      return nil, prep_err or "Failed to prepare command"
-    end
-    cmd = prepared.cmd
-    args = prepared.args
-    cleanup = prepared.cleanup
-  else
-    cmd = adapter:get_command()
-    args = adapter:get_args(query, opts)
+  local response, err = Backend.invoke_sync(request)
+  if err then
+    return nil, err
   end
 
-  -- Detect if this is a write query
-  local is_write = adapter.is_write_query and adapter:is_write_query(query) or false
-
-  -- Record start time
-  local start_time = vim.loop.hrtime()
-
-  -- Execute synchronously (wraps with proxychains if proxy is configured)
-  local result = vim
-    .system(adapter:build_command(cmd, args), {
-      text = true,
-      timeout = opts.timeout or 30000,
-    })
-    :wait()
-
-  -- Calculate execution time in milliseconds
-  local duration_ms = (vim.loop.hrtime() - start_time) / 1000000
-
-  if result.code ~= 0 then
-    local error_msg = result.stderr or "Command failed with exit code " .. result.code
-    if cleanup then
-      pcall(cleanup)
-    end
-    return nil, error_msg
-  end
-
-  -- Handle write queries differently
-  if is_write and adapter.parse_write_output then
-    local ok, write_result = pcall(adapter.parse_write_output, adapter, result.stdout or "")
-    if not ok then
-      if cleanup then
-        pcall(cleanup)
-      end
-      return nil, "Failed to parse write output: " .. tostring(write_result)
-    end
-
-    if cleanup then
-      pcall(cleanup)
-    end
-    return {
-      headers = {},
-      rows = {},
-      row_count = 0,
-      query_type = "write",
-      affected_rows = write_result.affected_rows,
-      matched_rows = write_result.matched_rows,
-      changed_rows = write_result.changed_rows,
-      warnings = write_result.warnings,
-      duration_ms = duration_ms,
-    },
-      nil
-  end
-
-  local ok, parsed = pcall(adapter.parse_output, adapter, result.stdout or "")
-  if not ok then
-    if cleanup then
-      pcall(cleanup)
-    end
-    return nil, "Failed to parse output: " .. tostring(parsed)
-  end
-
-  local headers = {}
-  local rows = {}
-
-  if #parsed > 0 then
-    if not opts.skip_column_names then
-      headers = parsed[1]
-      for i = 2, #parsed do
-        table.insert(rows, parsed[i])
-      end
-    else
-      rows = parsed
-    end
-  end
-
-  if cleanup then
-    pcall(cleanup)
-  end
-  return {
-    headers = headers,
-    rows = rows,
-    row_count = #rows,
-    query_type = "select",
-    duration_ms = duration_ms,
-  },
-    nil
+  return to_query_result(response), nil
 end
 
 --- Extract the SQL query at the cursor position based on semicolon delimiters

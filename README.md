@@ -17,10 +17,15 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
 - Schema and table explorer (toggle with `<leader>ST`; hidden by default)
 - Export query results to CSV, TSV, and JSON formats
 - SQL completion with LSP support (databases, tables, columns, keywords)
+- Queries run through `abcql-backend`, a small Go binary bundled in this repo that talks to MySQL
+  directly (no `mysql` CLI required) — see [Backend](#backend)
 
 ---
 
 ## Installation
+
+`abcql.nvim` ships with `abcql-backend`, a Go binary that executes your queries. It needs to be built
+once (and again after each plugin update) — see [Backend](#backend).
 
 ### Using [lazy.nvim](https://github.com/folke/lazy.nvim)
 
@@ -30,6 +35,7 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
   dependencies = {
     "nvim-lua/plenary.nvim",
   },
+  build = "make build",
   config = function()
     require("abcql").setup()
 
@@ -77,7 +83,7 @@ You can use `:AbcqlInitConfig` to generate a template file.
 
 #### SOCKS Proxy Support
 
-To connect through a SOCKS proxy (e.g., SSH tunnel, VPN), use a table-style datasource config with a `proxy` field. This requires [`proxychains4`](https://github.com/rofl0r/proxychains-ng) installed on your system.
+To connect through a SOCKS proxy (e.g., SSH tunnel, VPN), use a table-style datasource config with a `proxy` field. `abcql-backend` dials the proxy natively — no external `proxychains4` dependency needed.
 
 ```lua
 return {
@@ -90,7 +96,7 @@ return {
 }
 ```
 
-Supported proxy types: `socks4://host:port`, `socks5://host:port`.
+Supported proxy types: `socks5://host:port`.
 
 Environment variables work in the proxy field too: `proxy = "socks5://${PROXY_HOST}:${PROXY_PORT}"`.
 
@@ -146,6 +152,39 @@ return {
 
 ---
 
+## Backend
+
+Queries are executed by `abcql-backend`, a small Go binary in this repo (`backend/`) that connects to
+MySQL directly via a native driver — no `mysql` CLI dependency. It's built with:
+
+```sh
+make build
+```
+
+which compiles `bin/abcql-backend`. If you use lazy.nvim, add `build = "make build"` to the plugin spec
+(see [Installation](#installation)) so it's built automatically on install and update.
+
+The binary also works standalone, independent of Neovim:
+
+```sh
+echo '{"engine":"mysql","host":"127.0.0.1","port":3306,"user":"root","database":"shop","sql":"select 1"}' \
+  | bin/abcql-backend exec
+```
+
+By default, abcql.nvim looks for `bin/abcql-backend` next to the plugin itself. To use a binary built
+elsewhere, set `backend.path` in `setup()`:
+
+```lua
+require("abcql").setup({
+  backend = {
+    path = "/custom/path/to/abcql-backend",
+    timeout_ms = 30000, -- default query timeout
+  },
+})
+```
+
+---
+
 ## Usage
 
 ### Trying it Out
@@ -171,7 +210,7 @@ Run Neovim's built-in healthcheck for abcql:
 
 It validates:
 
-- Required CLI dependencies (`mysql`)
+- The `abcql-backend` binary is present and runnable
 - Optional JSON export dependency (`jq`)
 - Datasource config structure
 - Linux keyring secret configuration and lookup (`secret-tool`) when `secret` refs are configured

@@ -7,19 +7,36 @@ local function is_linux()
   return uname and uname.sysname == "Linux"
 end
 
+local function check_backend_binary()
+  local ok_backend, Backend = pcall(require, "abcql.backend")
+  if not ok_backend then
+    health.error("Failed to load abcql.backend: " .. tostring(Backend))
+    return
+  end
+
+  local path = Backend.get_path()
+  if not path or vim.fn.executable(path) ~= 1 then
+    health.error("abcql-backend binary not found" .. (path and (" at: " .. path) or ""), {
+      "Run `make build` in the abcql.nvim plugin directory to compile it (requires Go).",
+      'lazy.nvim users: add build = "make build" to the plugin spec to build it automatically.',
+    })
+    return
+  end
+
+  local result = vim.system({ path, "version" }, { text = true }):wait()
+  if result.code == 0 then
+    health.ok("abcql-backend is available (" .. vim.trim(result.stdout or "") .. ")")
+  else
+    health.error("abcql-backend at " .. path .. " did not run successfully", {
+      tostring(result.stderr),
+    })
+  end
+end
+
 local function check_core_dependencies()
   health.start("Core dependencies")
 
-  if vim.fn.executable("mysql") == 1 then
-    health.ok("mysql CLI is available")
-  else
-    health.error("mysql CLI is not available", {
-      "Install MySQL client tools so abcql can execute queries.",
-      "Debian/Ubuntu: apt install mysql-client",
-      "Fedora: dnf install mysql",
-      "Arch: pacman -S mysql-clients",
-    })
-  end
+  check_backend_binary()
 
   if vim.fn.executable("jq") == 1 then
     health.ok("jq is available (JSON export enabled)")

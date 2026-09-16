@@ -32,22 +32,10 @@ describe("BaseAdapter", function()
   end)
 
   describe("abstract methods", function()
-    it("get_command should throw error", function()
+    it("execute_query should throw error", function()
       assert.has_error(function()
-        adapter:get_command()
-      end, "get_command must be implemented by adapter")
-    end)
-
-    it("get_args should throw error", function()
-      assert.has_error(function()
-        adapter:get_args("SELECT 1")
-      end, "get_args must be implemented by adapter")
-    end)
-
-    it("parse_output should throw error", function()
-      assert.has_error(function()
-        adapter:parse_output("some output")
-      end, "parse_output must be implemented by adapter")
+        adapter:execute_query("SELECT 1", nil, function() end)
+      end, "execute_query must be implemented by adapter")
     end)
 
     it("get_databases should throw error", function()
@@ -104,6 +92,85 @@ describe("BaseAdapter", function()
         local result = adapter:escape_value("value with 'quotes'")
         assert.are.equal("value with 'quotes'", result)
       end)
+    end)
+  end)
+
+  describe("build_backend_request", function()
+    it("should build a request from config fields", function()
+      local a = Adapter.new({
+        host = "db.internal",
+        port = 3307,
+        user = "alice",
+        password = "s3cret",
+        database = "shop",
+      })
+
+      local request = a:build_backend_request("SELECT 1", {})
+
+      assert.are.equal("mysql", request.engine)
+      assert.are.equal("db.internal", request.host)
+      assert.are.equal(3307, request.port)
+      assert.are.equal("alice", request.user)
+      assert.are.equal("s3cret", request.password)
+      assert.are.equal("shop", request.database)
+      assert.are.equal("SELECT 1", request.sql)
+    end)
+
+    it("should use self.ENGINE when set", function()
+      local a = Adapter.new({})
+      a.ENGINE = "postgres"
+
+      local request = a:build_backend_request("SELECT 1", {})
+
+      assert.are.equal("postgres", request.engine)
+    end)
+
+    it("should override database with opts.database", function()
+      local a = Adapter.new({ database = "configured_db" })
+
+      local request = a:build_backend_request("SELECT 1", { database = "opts_db" })
+
+      assert.are.equal("opts_db", request.database)
+    end)
+
+    it("should forward opts.timeout as timeout_ms", function()
+      local a = Adapter.new({})
+
+      local request = a:build_backend_request("SELECT 1", { timeout = 5000 })
+
+      assert.are.equal(5000, request.timeout_ms)
+    end)
+
+    it("should not set proxy when config has none", function()
+      local a = Adapter.new({})
+
+      local request = a:build_backend_request("SELECT 1", {})
+
+      assert.is_nil(request.proxy)
+    end)
+
+    it("should parse a valid proxy URL into request.proxy", function()
+      local a = Adapter.new({ proxy = "socks5://127.0.0.1:1080" })
+
+      local request = a:build_backend_request("SELECT 1", {})
+
+      assert.are.same({ type = "socks5", host = "127.0.0.1", port = 1080 }, request.proxy)
+    end)
+
+    it("should notify and omit proxy on an invalid proxy URL", function()
+      local original_notify = vim.notify
+      local notified = false
+      vim.notify = function()
+        notified = true
+      end
+
+      local a = Adapter.new({ proxy = "not-a-proxy-url" })
+      local request = a:build_backend_request("SELECT 1", {})
+
+      vim.notify = original_notify
+
+      assert.is_true(notified)
+      assert.is_nil(request.proxy)
     end)
   end)
 end)

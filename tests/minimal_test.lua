@@ -24,7 +24,7 @@ print("✓ Active datasource: " .. (active_datasource.name or "nil"))
 
 local adapter = active_datasource.adapter
 print("✓ Got adapter: " .. type(adapter))
-print("✓ Adapter type: " .. (adapter.get_command and adapter:get_command() or "unknown"))
+print("✓ Adapter engine: " .. (adapter.ENGINE or "unknown"))
 print()
 
 -- Test 1: Async query with callback

@@ -6,22 +6,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `abcql.nvim` is a Neovim plugin (Lua, requires Neovim >= 0.11.0) implementing a DataGrip/DBeaver-style
 database client inside the editor: connection management, a query editor + results UI, schema tree,
-SQL completion via an in-process LSP, and result export.
+SQL completion via an in-process LSP, and result export. Queries are executed by `abcql-backend`, a Go
+binary in `backend/` (own Go module) built via `make build` — it talks to the database directly via a
+native driver and is usable standalone, independent of Neovim.
 
 ## Commands
 
 ```bash
-make lint          # luacheck lua/ tests/
-make format        # stylua --check . (verify formatting)
-make format-fix    # stylua . (apply formatting)
-make check         # lint + format
-make test          # run the full test suite (see below)
+make build          # go build backend/ -> bin/abcql-backend (gitignored)
+make lint           # lint-backend (gofmt -l + go vet on backend/) + luacheck lua/ tests/
+make format         # stylua --check . (verify formatting)
+make format-fix     # stylua . (apply formatting)
+make check          # lint + format
+make test           # test-backend (go test ./backend/...) + the Lua test suite below
 ```
 
-Tests run via `PlenaryBustedDirectory` against `tests/minimal_init.lua` (auto-clones
+`bin/abcql-backend` must exist for anything that actually executes a query (the live-MySQL smoke test
+below, or manual testing) — run `make build` first; the mocked Lua unit tests don't need it.
+
+The Lua test suite runs via `PlenaryBustedDirectory` against `tests/minimal_init.lua` (auto-clones
 `nvim-lua/plenary.nvim` to `/tmp/plenary.nvim` if missing, or set `PLENARY_DIR`), followed by
-`tests/minimal_test.lua`, a headless smoke test against a real `mysql` connection
-(`mysql://dbuser:dbpassword@localhost:3306/bookstore`) — it needs that server reachable to pass.
+`tests/minimal_test.lua`, a headless smoke test against a real MySQL connection
+(`mysql://dbuser:dbpassword@localhost:3306/bookstore`, executed through `abcql-backend`) — it needs
+that server reachable (and the backend built) to pass.
 
 `make test-db-up` starts a separate `compose.yml` stack (see `docker/README.md`) that loads
 datacharmer/test_db's `employees` database — a richer schema for manually testing the tree/completion/
@@ -36,27 +43,48 @@ nvim --headless --noplugin -u tests/minimal_init.lua \
 
 Specs live under `tests/abcql/` mirroring `lua/abcql/` (e.g. `lua/abcql/db/query.lua` ↔
 `tests/abcql/db/query_spec.lua` — not all modules have specs yet, check before assuming one exists).
+The Go backend is a separate module and doesn't follow this mirroring: its tests are plain
+`backend/*_test.go` files run via `go test ./...` (`make test-backend`).
 
 Style: 2-space indent, double quotes, always-parenthesized calls (see `.stylua.toml`); `luacheck`
 ignores unused-arg warnings (rule 212) and ships a relaxed `busted` global set for `tests/`.
 
 ## Architecture
 
-### No MySQL client library — everything shells out
+### Go backend does the querying — no shelled-out DB CLI
 
-There is no MySQL driver dependency. `abcql.db.adapter.mysql` builds argv for the `mysql` CLI
-(`-h`, `-P`, `-u`, `-D`, `--batch`, `-e <query>`, `--skip-column-names`, `-vvv` for write queries
-to force tabular "Query OK, N rows affected" output) and `abcql.db.query` runs it via `vim.system`
-(async `execute_async` / blocking `execute_sync`), parsing tab-delimited stdout. Passwords never hit
-argv: `prepare_command` writes a temp `--defaults-extra-file` per invocation and cleans it up via a
-`cleanup` callback threaded through both call paths. SOCKS proxying wraps the argv with
-`proxychains4 -q -f <generated-config>` (`abcql.db.adapter.base:build_command`).
+`backend/` is a standalone Go module (`abcql-backend`) built via `make build` into `bin/abcql-backend`
+(gitignored). It's spawned as a one-shot subprocess per operation — `lua/abcql/backend/init.lua`
+(`Backend.invoke`/`invoke_sync`) runs it via `vim.system`, writing a JSON request to stdin
+(`{engine, host, port, user, password, database, options, proxy, sql, timeout_ms}`) and reading a
+single JSON response from stdout (`{query_type, headers, rows, row_count, affected_rows, matched_rows,
+changed_rows, warnings, duration_ms}` on success, `{error}` on failure, always valid JSON either way).
+No daemon, no connection pooling — same shell-per-query shape as before, but the backend holds a real
+`database/sql` + `go-sql-driver/mysql` connection instead of text-scraping the `mysql` CLI's output.
+SOCKS5 proxying is dialed natively in Go (`backend/proxy.go`, `golang.org/x/net/proxy`) rather than
+wrapping the process with `proxychains4`. NULL cells are still serialized as the literal string
+`"NULL"` (not JSON `null`) so `abcql.ui.format`/`abcql.ui.highlights` don't need to special-case
+`vim.NIL`.
 
-Adding a new database engine means implementing `abcql.db.adapter.base`'s interface (`get_command`,
-`get_args`/`prepare_command`, `parse_output`, `get_databases`/`get_tables`/`get_columns`,
-`escape_identifier`) and registering it in `abcql.db.Database.setup` via
-`connectionRegistry:register_adapter(scheme, AdapterClass)` — the DSN scheme (e.g. `mysql://`)
-selects the adapter.
+`abcql.db.adapter.base:build_backend_request` builds that JSON request generically from `self.config`
+(host/port/user/password/database/options/proxy — already parsed/secret-resolved by
+`abcql.db.connection.registry`) plus the adapter's `ENGINE` field; most adapters don't need to
+override it. `abcql.db.query.execute_async`/`execute_sync` call `Backend.invoke`/`invoke_sync` and map
+the JSON response straight onto `QueryResult` — there's no CLI-argv-building or tab-delimited-output
+parsing left on the Lua side. Passwords travel over the subprocess's stdin pipe only, never argv or a
+temp file.
+
+`MySQLAdapter:get_databases`/`get_tables`/`get_columns`/`get_constraints`/`get_indexes` are just
+`INFORMATION_SCHEMA` SQL text run through that same `Query.execute_async`, so schema introspection
+(tree view, LSP completion cache) rides the Go backend for free — no separate code path.
+
+Adding a new database engine now takes two changes: a Lua adapter implementing
+`abcql.db.adapter.base`'s interface (`get_databases`/`get_tables`/`get_columns`,
+`escape_identifier`/`escape_value`, an `ENGINE` string constant) registered via
+`connectionRegistry:register_adapter(scheme, AdapterClass)` in `abcql.db.Database.setup`, *and* a
+matching branch in the Go backend's `execRequest` (`backend/mysql.go` is currently the only one) that
+handles that `Request.Engine` value — the backend is the only thing that actually opens a database
+connection now.
 
 ### Layered config resolution
 

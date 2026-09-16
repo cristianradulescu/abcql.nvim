@@ -6,116 +6,15 @@ local MySQLAdapter = {}
 MySQLAdapter.__index = MySQLAdapter
 setmetatable(MySQLAdapter, { __index = Adapter })
 
+--- Engine identifier sent to abcql-backend
+MySQLAdapter.ENGINE = "mysql"
+
 --- Create a new MySQL adapter instance
 --- @param config AdapterConfig Configuration parameters for the adapter
 --- @return table The adapter instance
 function MySQLAdapter.new(config)
   local self = Adapter.new(config)
   return setmetatable(self, MySQLAdapter)
-end
-
---- Get the MySQL CLI command name
---- @return string The command name "mysql"
-function MySQLAdapter:get_command()
-  return "mysql"
-end
-
---- Get CLI arguments for MySQL query execution
---- @param query string The SQL query to execute
---- @param opts table|nil Optional parameters (skip_column_names: boolean, database: string)
---- @return table Array of command-line arguments for mysql CLI
-function MySQLAdapter:get_args(query, opts)
-  opts = opts or {}
-  local args = {
-    "-h" .. (self.config.host or "localhost"),
-    "-P" .. tostring(self.config.port or 3306),
-    "-u" .. (self.config.user or "root"),
-  }
-
-  -- Use opts.database if provided, otherwise fall back to config.database
-  local database = opts.database or self.config.database
-  if database then
-    table.insert(args, "-D" .. database)
-  end
-
-  table.insert(args, "--batch")
-  table.insert(args, "--default-character-set=utf8mb4")
-
-  if self:is_write_query(query) then
-    -- Use -vvv to force table output format even in batch mode
-    -- This ensures we get "Query OK, X rows affected" messages for write queries
-    table.insert(args, "-vvv")
-  end
-
-  if opts.skip_column_names then
-    table.insert(args, "--skip-column-names")
-  end
-
-  table.insert(args, "-e")
-  table.insert(args, query)
-
-  return args
-end
-
---- Create a temporary mysql defaults file for secure password passing
---- @return string|nil path Path to temp file
---- @return string|nil err Error if file creation failed
-local function create_mysql_defaults_file(config)
-  local path = os.tmpname()
-  local file, err = io.open(path, "w")
-  if not file then
-    return nil, err
-  end
-
-  file:write("[client]\n")
-  if config.user then
-    file:write("user=", config.user, "\n")
-  end
-  if config.password then
-    file:write("password=", config.password, "\n")
-  end
-  if config.host then
-    file:write("host=", config.host, "\n")
-  end
-  if config.port then
-    file:write("port=", tostring(config.port), "\n")
-  end
-  file:close()
-
-  if vim.uv and vim.uv.fs_chmod then
-    vim.uv.fs_chmod(path, 384) -- 0600
-  end
-
-  return path, nil
-end
-
---- Prepare command execution with optional secure password transport
---- @param query string
---- @param opts table|nil
---- @return table|nil prepared { cmd: string, args: table, cleanup?: function }
---- @return string|nil err
-function MySQLAdapter:prepare_command(query, opts)
-  local args = self:get_args(query, opts)
-  local cmd = self:get_command()
-
-  if not self.config.password then
-    return { cmd = cmd, args = args }, nil
-  end
-
-  local defaults_file, file_err = create_mysql_defaults_file(self.config)
-  if not defaults_file then
-    return nil, "Failed to create mysql defaults file: " .. tostring(file_err)
-  end
-
-  table.insert(args, 1, "--defaults-extra-file=" .. defaults_file)
-
-  return {
-    cmd = cmd,
-    args = args,
-    cleanup = function()
-      pcall(os.remove, defaults_file)
-    end,
-  }, nil
 end
 
 --- Execute a query with possible asynchronous callback
@@ -128,123 +27,6 @@ function MySQLAdapter:execute_query(query, opts, callback)
   end
 
   return Query.execute_async(self, query, callback, opts)
-end
-
---- Detect if a query is a write operation (INSERT, UPDATE, DELETE)
---- @param query string The SQL query
---- @return boolean True if the query is a write operation
-function MySQLAdapter:is_write_query(query)
-  local query_upper = query:upper():match("^%s*(%u+)")
-  return query_upper == "INSERT" or query_upper == "UPDATE" or query_upper == "DELETE"
-end
-
---- Parse MySQL write query output to extract affected rows information
---- @param raw string Raw output from mysql CLI for write queries
---- @return table Result object with affected_rows, matched_rows, changed_rows, warnings
-function MySQLAdapter:parse_write_output(raw)
-  local result = {
-    affected_rows = 0,
-    matched_rows = 0,
-    changed_rows = 0,
-    warnings = 0,
-  }
-
-  -- Parse "Query OK, X rows affected" line
-  local affected = raw:match("(%d+)%s+rows?%s+affected")
-  if affected then
-    result.affected_rows = tonumber(affected) or 0
-  end
-
-  -- Parse "Rows matched: X  Changed: Y  Warnings: Z" line
-  local matched = raw:match("Rows matched:%s*(%d+)")
-  if matched then
-    result.matched_rows = tonumber(matched) or 0
-  end
-
-  local changed = raw:match("Changed:%s*(%d+)")
-  if changed then
-    result.changed_rows = tonumber(changed) or 0
-  end
-
-  local warnings = raw:match("Warnings:%s*(%d+)")
-  if warnings then
-    result.warnings = tonumber(warnings) or 0
-  end
-
-  return result
-end
-
---- Unescape MySQL batch mode escape sequences in a field value
---- MySQL batch mode escapes special characters as: \n \t \\ \0
---- @param field string The escaped field value
---- @return string The unescaped field value
-local function unescape_mysql_field(field)
-  local result = {}
-  local i = 1
-  local len = #field
-
-  while i <= len do
-    local char = field:sub(i, i)
-    if char == "\\" and i < len then
-      local next_char = field:sub(i + 1, i + 1)
-      if next_char == "n" then
-        table.insert(result, "\n")
-        i = i + 2
-      elseif next_char == "t" then
-        table.insert(result, "\t")
-        i = i + 2
-      elseif next_char == "\\" then
-        table.insert(result, "\\")
-        i = i + 2
-      elseif next_char == "0" then
-        table.insert(result, "\0")
-        i = i + 2
-      else
-        -- Not a recognized escape, keep the backslash
-        table.insert(result, char)
-        i = i + 1
-      end
-    else
-      table.insert(result, char)
-      i = i + 1
-    end
-  end
-
-  return table.concat(result)
-end
-
---- Parse MySQL tab-separated output into rows
---- MySQL batch mode outputs TSV with escape sequences for special chars:
---- \n for newlines, \t for tabs, \\ for backslashes, \0 for NULL bytes
---- @param raw string Raw tab-separated output from mysql CLI
---- @return table Array of rows, where each row is an array of field values
-function MySQLAdapter:parse_output(raw)
-  local rows = {}
-  for line in raw:gmatch("[^\r\n]+") do
-    local row = {}
-    -- Split by tabs, but we need to handle empty fields too
-    local pos = 1
-    local len = #line
-    while pos <= len do
-      local tab_pos = line:find("\t", pos, true)
-      local field
-      if tab_pos then
-        field = line:sub(pos, tab_pos - 1)
-        pos = tab_pos + 1
-      else
-        field = line:sub(pos)
-        pos = len + 1
-      end
-      -- Unescape MySQL escape sequences
-      table.insert(row, unescape_mysql_field(field))
-    end
-    -- Handle trailing tab (empty last field)
-    if line:sub(-1) == "\t" then
-      table.insert(row, "")
-    end
-    table.insert(rows, row)
-  end
-  return rows
 end
 
 --- Fetch list of all databases asynchronously
@@ -265,7 +47,7 @@ function MySQLAdapter:get_databases(callback)
     end
 
     callback(databases, nil)
-  end, { skip_column_names = true })
+  end)
 end
 
 --- Fetch list of tables in a database asynchronously
@@ -291,7 +73,7 @@ function MySQLAdapter:get_tables(database, callback)
     end
 
     callback(tables, nil)
-  end, { skip_column_names = true })
+  end)
 end
 
 --- Fetch list of columns in a table asynchronously
@@ -319,7 +101,7 @@ function MySQLAdapter:get_columns(database, table_name, callback)
     end
 
     callback(columns, nil)
-  end, { skip_column_names = true })
+  end)
 end
 
 --- Fetch constraints for a table asynchronously
@@ -373,7 +155,7 @@ function MySQLAdapter:get_constraints(database, table_name, callback)
     end
 
     callback(constraints, nil)
-  end, { skip_column_names = true })
+  end)
 end
 
 --- Fetch indexes for a table asynchronously
@@ -428,7 +210,7 @@ function MySQLAdapter:get_indexes(database, table_name, callback)
     end
 
     callback(indexes, nil)
-  end, { skip_column_names = true })
+  end)
 end
 
 --- Escape a MySQL identifier using backticks

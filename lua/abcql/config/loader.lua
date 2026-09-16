@@ -47,7 +47,7 @@ M.CONFIG_TEMPLATE = [[
 --     },
 --   },
 --
--- SOCKS proxy support (requires proxychains4 installed):
+-- SOCKS proxy support (dialed natively by abcql-backend, socks5 only):
 --   prod = {
 --     dsn = "mysql://user:password@db-internal:3306/database",
 --     proxy = "socks5://127.0.0.1:1080",

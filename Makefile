@@ -1,8 +1,13 @@
-.PHONY: lint format check test test-db-up test-db-down test-db-logs
+.PHONY: lint lint-backend format format-fix check test test-backend build test-db-up test-db-down test-db-logs
 
-lint:
+lint: lint-backend
 	@echo "Running luacheck..."
 	@luacheck lua/ tests/
+
+lint-backend:
+	@echo "Running gofmt/go vet on backend..."
+	@test -z "$$(gofmt -l ./backend)" || (gofmt -l ./backend && exit 1)
+	@cd backend && go vet ./...
 
 format:
 	@echo "Running stylua..."
@@ -15,10 +20,19 @@ format-fix:
 check: lint format
 	@echo "All checks passed!"
 
-test:
+build:
+	@echo "Building abcql-backend..."
+	@mkdir -p bin
+	@cd backend && go build -o ../bin/abcql-backend .
+
+test: test-backend
 	@echo "Running tests..."
 	@nvim --headless --noplugin -u tests/minimal_init.lua -c "PlenaryBustedDirectory tests/ { minimal_init = 'tests/minimal_init.lua' }"
 	@nvim --headless -u NONE -c "luafile tests/minimal_test.lua"
+
+test-backend:
+	@echo "Running backend (Go) tests..."
+	@cd backend && go test ./...
 
 test-db-up:
 	@echo "Starting MySQL + importing the employees test database (docker/README.md)..."

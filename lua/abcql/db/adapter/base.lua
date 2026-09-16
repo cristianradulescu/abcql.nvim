@@ -2,9 +2,7 @@
 
 ---@class abcql.db.adapter.Adapter
 ---@field config {}
----@field get_command fun(self: abcql.db.adapter.Adapter): string
----@field get_args fun(self: abcql.db.adapter.Adapter, query: string, opts: table|nil): table
----@field parse_output fun(self: abcql.db.adapter.Adapter, raw: string): table
+---@field ENGINE string|nil Engine identifier sent to abcql-backend (e.g. "mysql"); defaults to "mysql" if unset
 ---@field get_databases fun(self: abcql.db.adapter.Adapter, callback: fun(databases: table, err: string|nil))
 ---@field get_tables fun(self: abcql.db.adapter.Adapter, database: string, callback: fun(tables: table, err: string|nil))
 ---@field get_columns fun(self: abcql.db.adapter.Adapter, database: string, table_name: string, callback: fun(columns: table, err: string|nil))
@@ -22,33 +20,12 @@ function Adapter.new(config)
   return self
 end
 
---- Get the CLI command name for this database adapter
---- @return string The command name (e.g., "mysql", "psql")
-function Adapter:get_command()
-  error("get_command must be implemented by adapter")
-end
-
---- Get CLI arguments for executing a query
---- @param query string The SQL query to execute
---- @param opts table|nil Optional parameters (adapter-specific)
---- @return table Array of command-line arguments
-function Adapter:get_args(query, opts)
-  error("get_args must be implemented by adapter")
-end
-
 --- Execute a query with possible asynchronous callback
 --- @param query string The SQL query to execute
 --- @param opts table|nil Optional parameters (adapter-specific)
 --- @param callback function Called with (results, error) where results is structured data
 function Adapter:execute_query(query, opts, callback)
   error("execute_query must be implemented by adapter")
-end
-
---- Parse raw CLI output into structured data
---- @param raw string Raw output from CLI command
---- @return table Array of rows
-function Adapter:parse_output(raw)
-  error("parse_output must be implemented by adapter")
 end
 
 --- Fetch list of all databases asynchronously
@@ -114,54 +91,46 @@ local function parse_proxy_url(proxy_url)
   return { type = proxy_type, host = host, port = tonumber(port) }, nil
 end
 
---- Generate a proxychains config file for the given proxy
---- @param proxy table Parsed proxy with type, host, port fields
---- @return string path Path to the generated config file
-local function generate_proxychains_config(proxy)
-  local config_content = string.format(
-    "strict_chain\nquiet_mode\n[ProxyList]\n%s %s %d\n",
-    proxy.type, proxy.host, proxy.port
-  )
-  local path = os.tmpname()
-  local file = io.open(path, "w")
-  if file then
-    file:write(config_content)
-    file:close()
-  end
-  return path
-end
+--- Build the JSON-serializable request table sent to abcql-backend for a query.
+--- Generic across engines: connection fields come straight from `self.config`
+--- (already parsed/secret-resolved by abcql.db.connection.registry), so most
+--- adapters shouldn't need to override this.
+--- @param query string The SQL query to execute
+--- @param opts table|nil Optional parameters (database?: string, timeout?: number in ms)
+--- @return table request
+function Adapter:build_backend_request(query, opts)
+  opts = opts or {}
 
---- Build the full command array for execution, wrapping with proxychains if proxy is configured
---- @param cmd string The base command (e.g., "mysql")
---- @param args table Array of command-line arguments
---- @return table The full command array ready for vim.system()
-function Adapter:build_command(cmd, args)
-  if not self.config.proxy then
-    return { cmd, unpack(args) }
+  -- vim.json.encode has no way to tell an empty map from an empty array, and
+  -- defaults to `[]` for an empty plain Lua table -- which Go's
+  -- map[string]string field rejects. vim.empty_dict() forces `{}` instead.
+  local options = self.config.options
+  if not options or not next(options) then
+    options = vim.empty_dict()
   end
 
-  -- Generate proxychains config on first use, cache for reuse
-  if not self._proxychains_config_path then
+  local request = {
+    engine = self.ENGINE or "mysql",
+    host = self.config.host,
+    port = self.config.port,
+    user = self.config.user,
+    password = self.config.password,
+    database = opts.database or self.config.database,
+    options = options,
+    sql = query,
+    timeout_ms = opts.timeout,
+  }
+
+  if self.config.proxy then
     local proxy, err = parse_proxy_url(self.config.proxy)
-    if not proxy then
+    if proxy then
+      request.proxy = proxy
+    else
       vim.notify("abcql: " .. err, vim.log.levels.ERROR)
-      return { cmd, unpack(args) }
     end
-
-    -- Check that proxychains4 is available
-    if vim.fn.executable("proxychains4") ~= 1 then
-      vim.notify("abcql: proxychains4 is not installed. Install it to use SOCKS proxy connections.", vim.log.levels.ERROR)
-      return { cmd, unpack(args) }
-    end
-
-    self._proxychains_config_path = generate_proxychains_config(proxy)
   end
 
-  local full_cmd = { "proxychains4", "-q", "-f", self._proxychains_config_path, cmd }
-  for _, arg in ipairs(args) do
-    table.insert(full_cmd, arg)
-  end
-  return full_cmd
+  return request
 end
 
 return Adapter

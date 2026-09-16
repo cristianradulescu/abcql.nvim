@@ -3,7 +3,7 @@ local M = {}
 local loader = require("abcql.config.loader")
 
 ---@alias abcql.Config
----| { datasources: table<string, string> } Mapping of data source names to DSN strings
+---| { datasources: table<string, string>, backend: { path: string?, timeout_ms: number } }
 
 ---@type abcql.Config
 local defaults = {
@@ -11,6 +11,13 @@ local defaults = {
     -- Examples:
     -- shop_dev = "mysql://user:password@localhost:3306/shop_db",
     -- shop_prod = "mysql://user:password@prodserv:3306/shop_db",
+  },
+  backend = {
+    -- Path to the abcql-backend binary. Defaults to bin/abcql-backend
+    -- relative to the plugin's own runtime directory (see abcql.backend.get_path).
+    path = nil,
+    -- Default query timeout, forwarded to abcql-backend as timeout_ms.
+    timeout_ms = 30000,
   },
 }
 
