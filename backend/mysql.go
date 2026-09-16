@@ -41,7 +41,7 @@ func buildDSN(req *Request, network string) string {
 	if host == "" {
 		host = "localhost"
 	}
-	port := req.Port
+	port := int(req.Port)
 	if port == 0 {
 		port = 3306
 	}

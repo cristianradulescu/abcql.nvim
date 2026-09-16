@@ -1,24 +1,62 @@
 package main
 
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// flexInt unmarshals from either a JSON number or a numeric JSON string, so
+// hand-written requests (e.g. a quick shell one-liner) can quote port or
+// timeout values without abcql-backend rejecting the request outright.
+type flexInt int
+
+func (f *flexInt) UnmarshalJSON(data []byte) error {
+	var asInt int
+	if err := json.Unmarshal(data, &asInt); err == nil {
+		*f = flexInt(asInt)
+		return nil
+	}
+
+	var asString string
+	if err := json.Unmarshal(data, &asString); err != nil {
+		return fmt.Errorf("expected a number or a numeric string, got %s", data)
+	}
+
+	asString = strings.TrimSpace(asString)
+	if asString == "" {
+		*f = 0
+		return nil
+	}
+
+	parsed, err := strconv.Atoi(asString)
+	if err != nil {
+		return fmt.Errorf("expected a number or a numeric string, got %q", asString)
+	}
+	*f = flexInt(parsed)
+	return nil
+}
+
 // Request is the JSON object abcql-backend reads from stdin for the "exec" command.
 type Request struct {
 	Engine    string            `json:"engine"`
 	Host      string            `json:"host"`
-	Port      int               `json:"port"`
+	Port      flexInt           `json:"port"`
 	User      string            `json:"user"`
 	Password  string            `json:"password"`
 	Database  string            `json:"database"`
 	Options   map[string]string `json:"options"`
 	Proxy     *ProxyConfig      `json:"proxy"`
 	SQL       string            `json:"sql"`
-	TimeoutMs int               `json:"timeout_ms"`
+	TimeoutMs flexInt           `json:"timeout_ms"`
 }
 
 // ProxyConfig describes a SOCKS proxy to dial the database connection through.
 type ProxyConfig struct {
-	Type string `json:"type"`
-	Host string `json:"host"`
-	Port int    `json:"port"`
+	Type string  `json:"type"`
+	Host string  `json:"host"`
+	Port flexInt `json:"port"`
 }
 
 // Response is the JSON object abcql-backend writes to stdout for the "exec" command.
