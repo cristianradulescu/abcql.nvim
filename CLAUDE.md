@@ -104,7 +104,15 @@ proxy strings support `${VAR_NAME}` env expansion. Table-style datasources may a
 config file (and `setup()`) may name a `default` datasource, same precedence. `setup()` also has
 `ui` (panel sizes, icons, cell width) and `query` (confirm policy, `max_rows`, `auto_attach`,
 `treesitter`) sections; modules read them via `require("abcql.config").ui/.query` with local
-fallbacks so they still work when config was never set up (tests).
+fallbacks so they still work when config was never set up (tests). `:AbcqlAddDatasource` /
+`:AbcqlUpdateDatasource` edit config files textually: `loader.add_datasource_to_file` inserts an
+entry right after the `datasources = {` line and `loader.update_datasource_in_file` replaces the
+brace-matched line range found by `find_datasource_entry`, so comments and sibling entries survive;
+both re-trust the file for `vim.secure.read`. The prompt flows live in `abcql.config.editor`
+(`add`/`update`), including the keyring step that calls `abcql.secret.store` (secret-tool,
+password over stdin) and writes a `secret` reference plus a password-less DSN instead of the
+credential. Only datasources with a `source_path` (local/user file) are updatable; `setup()`
+datasources are not.
 
 Passwords can also be deferred to a keyring lookup
 (`secret = { service, account }` in a datasource, currently Linux `secret-tool` only via

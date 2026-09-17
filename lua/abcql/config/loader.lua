@@ -32,6 +32,10 @@ M.USER_CONFIG_DIR = vim.fn.stdpath("config") .. "/abcql"
 --- User datasources file path
 M.USER_DATASOURCES_PATH = M.USER_CONFIG_DIR .. "/datasources.lua"
 
+--- Whether files written by add_datasource_to_file are marked trusted for
+--- vim.secure.read (tests disable this to keep the trust database clean)
+M.TRUST_WRITTEN_FILES = true
+
 --- Template content for new config files
 M.CONFIG_TEMPLATE = [[
 -- abcql.nvim datasources configuration
@@ -282,6 +286,202 @@ function M.create_config_file(path)
 
   file:write(M.CONFIG_TEMPLATE)
   file:close()
+
+  return true, nil
+end
+
+--- Remove the password component from a DSN (`scheme://user:pass@host` -> `scheme://user@host`)
+--- @param dsn string
+--- @return string
+function M.strip_dsn_password(dsn)
+  return (dsn:gsub("^(%w+://[^:/@]+):[^@]*@", "%1@"))
+end
+
+--- Set (or replace) the password component of a DSN
+--- @param dsn string
+--- @param password string
+--- @return string
+function M.set_dsn_password(dsn, password)
+  local stripped = M.strip_dsn_password(dsn)
+  local replaced, count = stripped:gsub("^(%w+://[^:/@]+)@", "%1:" .. password:gsub("%%", "%%%%") .. "@")
+  if count == 0 then
+    return dsn
+  end
+  return replaced
+end
+
+--- Find the line range of a datasource entry in config file lines.
+--- Handles one-line string entries and multi-line table entries (brace-matched).
+--- @param lines string[]
+--- @param name string
+--- @return number|nil start_line 1-indexed
+--- @return number|nil end_line 1-indexed (inclusive)
+function M.find_datasource_entry(lines, name)
+  local key_pattern = "^%s*" .. vim.pesc(name) .. "%s*="
+  local quoted_key_pattern = '^%s*%["' .. vim.pesc(name) .. '"%]%s*='
+  for i, line in ipairs(lines) do
+    if line:match(key_pattern) or line:match(quoted_key_pattern) then
+      local depth = 0
+      for j = i, #lines do
+        local _, opens = lines[j]:gsub("{", "")
+        local _, closes = lines[j]:gsub("}", "")
+        depth = depth + opens - closes
+        if depth <= 0 then
+          return i, j
+        end
+      end
+      return i, #lines
+    end
+  end
+  return nil, nil
+end
+
+--- Replace a datasource entry in a config file with a freshly rendered one.
+--- @param path string
+--- @param name string
+--- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string }
+--- @return boolean success
+--- @return string|nil error
+function M.update_datasource_in_file(path, name, entry)
+  local parsed, parse_err = require("abcql.db.connection.dsn").parse_dsn(M.expand_env_vars(entry.dsn or ""))
+  if not parsed then
+    return false, parse_err
+  end
+
+  local file, open_err = io.open(path, "r")
+  if not file then
+    return false, "Failed to read config file: " .. tostring(open_err)
+  end
+  local content = file:read("*a")
+  file:close()
+
+  local lines = vim.split(content, "\n", { plain = true })
+  local start_line, end_line = M.find_datasource_entry(lines, name)
+  if not start_line then
+    return false, string.format("Datasource '%s' not found in %s", name, path)
+  end
+
+  local new_lines = vim.split(M.format_datasource_entry(name, entry), "\n", { plain = true })
+  local result = {}
+  for i = 1, start_line - 1 do
+    table.insert(result, lines[i])
+  end
+  for _, line in ipairs(new_lines) do
+    table.insert(result, line)
+  end
+  for i = end_line + 1, #lines do
+    table.insert(result, lines[i])
+  end
+
+  local out, write_err = io.open(path, "w")
+  if not out then
+    return false, "Failed to write config file: " .. tostring(write_err)
+  end
+  out:write(table.concat(result, "\n"))
+  out:close()
+
+  if M.TRUST_WRITTEN_FILES and vim.secure and vim.secure.trust then
+    pcall(vim.secure.trust, { action = "allow", path = path })
+  end
+
+  return true, nil
+end
+
+--- Render a datasource entry as Lua source for a config file
+--- @param name string
+--- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string }
+--- @return string
+function M.format_datasource_entry(name, entry)
+  local key = name:match("^[%a_][%w_]*$") and name or string.format("[%q]", name)
+  local has_flags = entry.proxy or entry.secret or entry.readonly or entry.confirm or entry.highlight
+  if not has_flags then
+    return string.format("    %s = %q,", key, entry.dsn)
+  end
+
+  local lines = { string.format("    %s = {", key), string.format("      dsn = %q,", entry.dsn) }
+  if entry.secret then
+    table.insert(lines, "      secret = {")
+    table.insert(lines, string.format("        service = %q,", entry.secret.service))
+    table.insert(lines, string.format("        account = %q,", entry.secret.account))
+    table.insert(lines, "      },")
+  end
+  if entry.proxy then
+    table.insert(lines, string.format("      proxy = %q,", entry.proxy))
+  end
+  if entry.readonly then
+    table.insert(lines, "      readonly = true,")
+  end
+  if entry.confirm then
+    table.insert(lines, string.format("      confirm = %q,", entry.confirm))
+  end
+  if entry.highlight then
+    table.insert(lines, string.format("      highlight = %q,", entry.highlight))
+  end
+  table.insert(lines, "    },")
+  return table.concat(lines, "\n")
+end
+
+--- Append a datasource to a config file, creating the file from the template
+--- when it does not exist. The entry is inserted right after the
+--- `datasources = {` line so comments and other entries are preserved.
+--- @param path string Config file path
+--- @param name string Datasource name
+--- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string }
+--- @return boolean success
+--- @return string|nil error
+function M.add_datasource_to_file(path, name, entry)
+  if not name:match("^[%w_%-%.]+$") then
+    return false, "Invalid datasource name (use letters, digits, _ - .)"
+  end
+  local parsed, parse_err = require("abcql.db.connection.dsn").parse_dsn(M.expand_env_vars(entry.dsn))
+  if not parsed then
+    return false, parse_err
+  end
+
+  if not vim.uv.fs_stat(path) then
+    local ok, err = M.create_config_file(path)
+    if not ok then
+      return false, err
+    end
+  end
+
+  local file, open_err = io.open(path, "r")
+  if not file then
+    return false, "Failed to read config file: " .. tostring(open_err)
+  end
+  local content = file:read("*a")
+  file:close()
+
+  local lines = vim.split(content, "\n", { plain = true })
+  local key_pattern = "^%s*" .. vim.pesc(name) .. "%s*="
+  local quoted_key_pattern = '^%s*%["' .. vim.pesc(name) .. '"%]%s*='
+  local insert_at = nil
+  for i, line in ipairs(lines) do
+    if line:match(key_pattern) or line:match(quoted_key_pattern) then
+      return false, string.format("Datasource '%s' already exists in %s", name, path)
+    end
+    if not insert_at and line:match("^%s*datasources%s*=%s*{%s*$") then
+      insert_at = i
+    end
+  end
+  if not insert_at then
+    return false, "Could not find a `datasources = {` line in " .. path
+  end
+
+  table.insert(lines, insert_at + 1, M.format_datasource_entry(name, entry))
+
+  local out, write_err = io.open(path, "w")
+  if not out then
+    return false, "Failed to write config file: " .. tostring(write_err)
+  end
+  out:write(table.concat(lines, "\n"))
+  out:close()
+
+  -- The file was written by the user through this command, so re-trust it
+  -- for vim.secure.read instead of prompting on the next reload.
+  if M.TRUST_WRITTEN_FILES and vim.secure and vim.secure.trust then
+    pcall(vim.secure.trust, { action = "allow", path = path })
+  end
 
   return true, nil
 end

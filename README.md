@@ -86,7 +86,8 @@ return {
 }
 ```
 
-You can use `:AbcqlInitConfig` to generate a template file.
+You can use `:AbcqlInitConfig` to generate a template file, `:AbcqlAddDatasource` to add entries
+to it interactively, and `:AbcqlUpdateDatasource` to edit them later.
 
 > **Important:** Add `.abcql.lua` to your `.gitignore` to avoid committing credentials.
 
@@ -201,6 +202,16 @@ return {
 #### Datasource Commands
 
 - `:AbcqlDatasource [name]` - Attach a datasource to the current buffer (picker when no name)
+- `:AbcqlAddDatasource [local|user]` - Add a datasource interactively (name, DSN, optional
+  readonly / always-confirm / SOCKS proxy); it is appended to `.abcql.lua` or the user config
+  (created from the template if missing), datasources are reloaded, and you can attach it to the
+  current SQL buffer right away. When `secret-tool` is installed it also offers to keep the
+  password in the keyring instead of the file: the password is stored under
+  `service abcql / account <name>-db-password`, stripped from the DSN, and referenced with a
+  `secret = { ... }` block
+- `:AbcqlUpdateDatasource [name]` - Edit a datasource that lives in a config file: a menu lets
+  you change the DSN, the password (in the DSN, or moved to / taken back from the keyring),
+  readonly, the confirm policy and the proxy, then `Save` rewrites just that entry in place
 - `:AbcqlInitConfig` - Create a template `.abcql.lua` in the current directory
 - `:AbcqlInitConfig user` - Create a template in the user config directory
 - `:AbcqlListDatasources` - Show all configured datasources with their source

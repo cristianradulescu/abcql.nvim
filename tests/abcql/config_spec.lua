@@ -153,3 +153,156 @@ describe("Config", function()
     end)
   end)
 end)
+
+describe("Config add_datasource", function()
+  local Config
+  local original_notify, original_input, original_select, original_secure_read
+  local dir, original_getcwd
+
+  before_each(function()
+    original_notify = vim.notify
+    original_input = vim.ui.input
+    original_select = vim.ui.select
+    vim.notify = function() end
+    dir = vim.fn.tempname()
+    vim.fn.mkdir(dir, "p")
+    original_getcwd = vim.fn.getcwd
+    vim.fn.getcwd = function()
+      return dir
+    end
+    -- The trust database is left untouched in tests, so read the temp file directly
+    original_secure_read = vim.secure.read
+    vim.secure.read = function(path)
+      local f = io.open(path, "r")
+      if not f then
+        return nil
+      end
+      local content = f:read("*a")
+      f:close()
+      return content
+    end
+    package.loaded["abcql.config"] = nil
+    package.loaded["abcql.config.loader"] = nil
+    package.loaded["abcql.db"] = nil
+    require("abcql.config.loader").TRUST_WRITTEN_FILES = false
+    Config = require("abcql.config")
+    Config.setup({})
+  end)
+
+  after_each(function()
+    vim.notify = original_notify
+    vim.ui.input = original_input
+    vim.ui.select = original_select
+    vim.fn.getcwd = original_getcwd
+    vim.secure.read = original_secure_read
+    vim.fn.delete(dir, "rf")
+  end)
+
+  it("writes the answers to the local config and registers the datasource", function()
+    local answers = { "staging", "mysql://u:p@staging:3306/app" }
+    vim.ui.input = function(_, on_confirm)
+      on_confirm(table.remove(answers, 1))
+    end
+    vim.ui.select = function(items, opts, on_choice)
+      if opts.prompt:match("^Options") then
+        on_choice("Readonly")
+      else
+        on_choice(items[1])
+      end
+    end
+
+    Config.add_datasource("local")
+
+    local config = dofile(dir .. "/.abcql.lua")
+    assert.are.equal("mysql://u:p@staging:3306/app", config.datasources.staging.dsn)
+    assert.is_true(config.datasources.staging.readonly)
+    local ds = require("abcql.db").connectionRegistry:get_datasource("staging")
+    assert.is_not_nil(ds)
+    assert.is_true(ds.readonly)
+  end)
+
+  it("moves the DSN password into the keyring when asked", function()
+    local original_executable = vim.fn.executable
+    local original_system = vim.system
+    vim.fn.executable = function(name)
+      if name == "secret-tool" then
+        return 1
+      end
+      return original_executable(name)
+    end
+    -- Record the `store` call; answer the `lookup` that the reload performs afterwards
+    local stored
+    vim.system = function(cmd, opts)
+      if cmd[2] == "store" then
+        stored = { cmd = cmd, stdin = opts and opts.stdin }
+      end
+      return {
+        wait = function()
+          return { code = 0, stdout = cmd[2] == "lookup" and "topsecret\n" or "", stderr = "" }
+        end,
+      }
+    end
+
+    local answers = { "prod", "mysql://u:topsecret@db:3306/app" }
+    vim.ui.input = function(_, on_confirm)
+      on_confirm(table.remove(answers, 1))
+    end
+    vim.ui.select = function(items, opts, on_choice)
+      if opts.prompt:match("^Password") then
+        on_choice(items[2])
+      elseif opts.prompt:match("^Options") then
+        on_choice("None")
+      else
+        on_choice(items[1])
+      end
+    end
+
+    Config.add_datasource("local")
+
+    vim.fn.executable = original_executable
+    vim.system = original_system
+
+    assert.are.equal("topsecret", stored.stdin)
+    assert.are.same({ "service", "abcql", "account", "prod-db-password" }, vim.list_slice(stored.cmd, 4, 7))
+    local content = assert(io.open(dir .. "/.abcql.lua")):read("*a")
+    assert.is_nil(content:find("topsecret", 1, true))
+    local config = dofile(dir .. "/.abcql.lua")
+    assert.are.equal("mysql://u@db:3306/app", config.datasources.prod.dsn)
+    assert.are.same({ service = "abcql", account = "prod-db-password" }, config.datasources.prod.secret)
+  end)
+
+  it("skips the keyring step when secret-tool is missing", function()
+    local original_executable = vim.fn.executable
+    vim.fn.executable = function(name)
+      if name == "secret-tool" then
+        return 0
+      end
+      return original_executable(name)
+    end
+    local prompts = {}
+    local answers = { "dev", "mysql://u:p@localhost:3306/app" }
+    vim.ui.input = function(_, on_confirm)
+      on_confirm(table.remove(answers, 1))
+    end
+    vim.ui.select = function(items, opts, on_choice)
+      table.insert(prompts, opts.prompt)
+      on_choice(items[1])
+    end
+
+    Config.add_datasource("local")
+    vim.fn.executable = original_executable
+
+    for _, prompt in ipairs(prompts) do
+      assert.is_nil(prompt:match("^Password"))
+    end
+    assert.are.equal("mysql://u:p@localhost:3306/app", dofile(dir .. "/.abcql.lua").datasources.dev)
+  end)
+
+  it("does nothing when the prompt is cancelled", function()
+    vim.ui.input = function(_, on_confirm)
+      on_confirm(nil)
+    end
+    Config.add_datasource("local")
+    assert.is_nil(vim.uv.fs_stat(dir .. "/.abcql.lua"))
+  end)
+end)

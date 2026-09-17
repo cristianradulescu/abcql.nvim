@@ -100,6 +100,18 @@ function M.reload_datasources()
   vim.notify("abcql: Datasources reloaded", vim.log.levels.INFO)
 end
 
+--- Interactively add a datasource (see abcql.config.editor)
+--- @param scope? "local"|"user" Target config file (prompted when nil)
+function M.add_datasource(scope)
+  require("abcql.config.editor").add(scope)
+end
+
+--- Interactively update a datasource that lives in a config file (see abcql.config.editor)
+--- @param name? string Datasource name (prompted when nil)
+function M.update_datasource(name)
+  require("abcql.config.editor").update(name)
+end
+
 --- Get loaded datasources with their source metadata
 --- @return table<string, abcql.LoadedDatasource>
 function M.get_loaded_datasources()

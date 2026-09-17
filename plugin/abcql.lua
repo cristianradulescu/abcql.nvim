@@ -171,6 +171,38 @@ end, {
   end,
 })
 
+--- Interactively add a datasource to the local or user config file
+vim.api.nvim_create_user_command("AbcqlAddDatasource", function(opts)
+  local scope = opts.args ~= "" and opts.args or nil
+  if scope and scope ~= "local" and scope ~= "user" then
+    vim.notify("abcql: scope must be 'local' or 'user'", vim.log.levels.WARN)
+    return
+  end
+  require("abcql.config").add_datasource(scope)
+end, {
+  desc = "Add a datasource to .abcql.lua (local) or the user config",
+  nargs = "?",
+  complete = function()
+    return { "local", "user" }
+  end,
+})
+
+--- Interactively update a datasource defined in a config file
+vim.api.nvim_create_user_command("AbcqlUpdateDatasource", function(opts)
+  local name = opts.args ~= "" and opts.args or nil
+  require("abcql.config").update_datasource(name)
+end, {
+  desc = "Update a datasource in .abcql.lua or the user config",
+  nargs = "?",
+  complete = function()
+    local names = {}
+    for _, item in ipairs(require("abcql.config.editor").editable_datasources()) do
+      table.insert(names, item.name)
+    end
+    return names
+  end,
+})
+
 --- List all configured datasources with their source
 vim.api.nvim_create_user_command("AbcqlListDatasources", function()
   local config = require("abcql.config")

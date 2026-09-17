@@ -30,4 +30,35 @@ function M.lookup(service, account)
   return secret, nil
 end
 
+--- Store a secret in the keyring via `secret-tool store`. The password is
+--- passed on stdin, never on the command line.
+--- @param service string
+--- @param account string
+--- @param password string
+--- @param label string|nil Human-readable label shown by keyring UIs
+--- @return boolean ok
+--- @return string|nil err
+function M.store(service, account, password, label)
+  if not M.is_available() then
+    return false, "secret-tool not found; install libsecret-tools"
+  end
+
+  label = label or ("abcql " .. account)
+  local result = vim
+    .system(
+      { "secret-tool", "store", "--label=" .. label, "service", service, "account", account },
+      { text = true, stdin = password }
+    )
+    :wait()
+  if result.code ~= 0 then
+    local err = trim(result.stderr or "")
+    if err == "" then
+      err = "secret-tool store failed with code " .. tostring(result.code)
+    end
+    return false, err
+  end
+
+  return true, nil
+end
+
 return M

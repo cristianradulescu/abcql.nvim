@@ -279,3 +279,197 @@ describe("Config Loader", function()
     end)
   end)
 end)
+
+describe("Config Loader add_datasource_to_file", function()
+  local Loader
+  local dir
+  local original_notify
+
+  before_each(function()
+    original_notify = vim.notify
+    vim.notify = function() end
+    package.loaded["abcql.config.loader"] = nil
+    Loader = require("abcql.config.loader")
+    Loader.TRUST_WRITTEN_FILES = false
+    dir = vim.fn.tempname()
+    vim.fn.mkdir(dir, "p")
+  end)
+
+  after_each(function()
+    vim.notify = original_notify
+    vim.fn.delete(dir, "rf")
+  end)
+
+  local function read(path)
+    local f = assert(io.open(path, "r"))
+    local content = f:read("*a")
+    f:close()
+    return content
+  end
+
+  it("creates the file from the template and inserts a string entry", function()
+    local path = dir .. "/.abcql.lua"
+    local ok, err = Loader.add_datasource_to_file(path, "dev", { dsn = "mysql://u:p@localhost:3306/db" })
+    assert.is_true(ok, err)
+    local content = read(path)
+    assert.is_not_nil(content:find('    dev = "mysql://u:p@localhost:3306/db",', 1, true))
+
+    local config = dofile(path)
+    assert.are.equal("mysql://u:p@localhost:3306/db", config.datasources.dev)
+  end)
+
+  it("writes a table entry when flags are set and keeps existing entries", function()
+    local path = dir .. "/.abcql.lua"
+    assert.is_true(Loader.add_datasource_to_file(path, "dev", { dsn = "mysql://u:p@localhost:3306/db" }))
+    local ok = Loader.add_datasource_to_file(path, "prod", {
+      dsn = "mysql://u@db:3306/app",
+      proxy = "socks5://127.0.0.1:1080",
+      readonly = true,
+      confirm = "always",
+      highlight = "DiagnosticError",
+    })
+    assert.is_true(ok)
+
+    local config = dofile(path)
+    assert.are.equal("mysql://u:p@localhost:3306/db", config.datasources.dev)
+    assert.are.equal("mysql://u@db:3306/app", config.datasources.prod.dsn)
+    assert.are.equal("socks5://127.0.0.1:1080", config.datasources.prod.proxy)
+    assert.is_true(config.datasources.prod.readonly)
+    assert.are.equal("always", config.datasources.prod.confirm)
+    assert.are.equal("DiagnosticError", config.datasources.prod.highlight)
+  end)
+
+  it("writes a secret reference and a password-less DSN", function()
+    local path = dir .. "/.abcql.lua"
+    local ok = Loader.add_datasource_to_file(path, "prod", {
+      dsn = "mysql://u@db:3306/app",
+      secret = { service = "abcql", account = "prod-db-password" },
+    })
+    assert.is_true(ok)
+    local config = dofile(path)
+    assert.are.equal("mysql://u@db:3306/app", config.datasources.prod.dsn)
+    assert.are.same({ service = "abcql", account = "prod-db-password" }, config.datasources.prod.secret)
+  end)
+
+  it("strip_dsn_password removes only the password component", function()
+    assert.are.equal("mysql://u@db:3306/app", Loader.strip_dsn_password("mysql://u:p%40ss@db:3306/app"))
+    assert.are.equal("mysql://u@db:3306/app", Loader.strip_dsn_password("mysql://u@db:3306/app"))
+    assert.are.equal("mysql://u@db/app?x=1", Loader.strip_dsn_password("mysql://u:p@db/app?x=1"))
+  end)
+
+  it("quotes names that are not valid identifiers", function()
+    local path = dir .. "/.abcql.lua"
+    assert.is_true(Loader.add_datasource_to_file(path, "my-app.dev", { dsn = "mysql://u@h/db" }))
+    assert.are.equal("mysql://u@h/db", dofile(path).datasources["my-app.dev"])
+  end)
+
+  it("rejects duplicates, bad names and bad DSNs", function()
+    local path = dir .. "/.abcql.lua"
+    assert.is_true(Loader.add_datasource_to_file(path, "dev", { dsn = "mysql://u@h/db" }))
+    local ok, err = Loader.add_datasource_to_file(path, "dev", { dsn = "mysql://u@h/db2" })
+    assert.is_false(ok)
+    assert.is_not_nil(err:find("already exists", 1, true))
+
+    ok, err = Loader.add_datasource_to_file(path, "bad name", { dsn = "mysql://u@h/db" })
+    assert.is_false(ok)
+    assert.is_not_nil(err:find("Invalid datasource name", 1, true))
+
+    ok = Loader.add_datasource_to_file(path, "other", { dsn = "not a dsn" })
+    assert.is_false(ok)
+  end)
+
+  it("preserves comments and other content in an existing file", function()
+    local path = dir .. "/.abcql.lua"
+    local f = assert(io.open(path, "w"))
+    f:write('-- keep me\nreturn {\n  default = "dev",\n  datasources = {\n    dev = "mysql://u@h/db",\n  },\n}\n')
+    f:close()
+    assert.is_true(Loader.add_datasource_to_file(path, "test", { dsn = "mysql://u@h/test" }))
+    local content = read(path)
+    assert.is_not_nil(content:find("-- keep me", 1, true))
+    local config = dofile(path)
+    assert.are.equal("dev", config.default)
+    assert.are.equal("mysql://u@h/test", config.datasources.test)
+  end)
+
+  it("set_dsn_password inserts or replaces the password", function()
+    assert.are.equal("mysql://u:new@h/db", Loader.set_dsn_password("mysql://u@h/db", "new"))
+    assert.are.equal("mysql://u:new@h/db", Loader.set_dsn_password("mysql://u:old@h/db", "new"))
+    assert.are.equal("mysql://u:p%w@h/db", Loader.set_dsn_password("mysql://u@h/db", "p%w"))
+  end)
+
+  it("find_datasource_entry locates string and table entries", function()
+    local lines = {
+      "return {",
+      "  datasources = {",
+      '    dev = "mysql://u@h/db",',
+      "    prod = {",
+      '      dsn = "mysql://u@h/app",',
+      '      secret = { service = "abcql", account = "x" },',
+      "    },",
+      '    ["my-app"] = "mysql://u@h/other",',
+      "  },",
+      "}",
+    }
+    local s, e = Loader.find_datasource_entry(lines, "dev")
+    assert.are.same({ 3, 3 }, { s, e })
+    s, e = Loader.find_datasource_entry(lines, "prod")
+    assert.are.same({ 4, 7 }, { s, e })
+    s, e = Loader.find_datasource_entry(lines, "my-app")
+    assert.are.same({ 8, 8 }, { s, e })
+    assert.is_nil(Loader.find_datasource_entry(lines, "nope"))
+  end)
+
+  it("update_datasource_in_file rewrites only the target entry", function()
+    local path = dir .. "/.abcql.lua"
+    local f = assert(io.open(path, "w"))
+    f:write(table.concat({
+      "-- keep me",
+      "return {",
+      '  default = "dev",',
+      "  datasources = {",
+      '    dev = "mysql://u:p@h/db",',
+      "    prod = {",
+      '      dsn = "mysql://u@h/app",',
+      "      readonly = true,",
+      "    },",
+      "  },",
+      "}",
+      "",
+    }, "\n"))
+    f:close()
+
+    local ok, err = Loader.update_datasource_in_file(path, "prod", {
+      dsn = "mysql://u@h/app2",
+      secret = { service = "abcql", account = "prod-db-password" },
+      confirm = "always",
+    })
+    assert.is_true(ok, err)
+    local content = assert(io.open(path)):read("*a")
+    assert.is_not_nil(content:find("-- keep me", 1, true))
+    local config = dofile(path)
+    assert.are.equal("dev", config.default)
+    assert.are.equal("mysql://u:p@h/db", config.datasources.dev)
+    assert.are.equal("mysql://u@h/app2", config.datasources.prod.dsn)
+    assert.is_nil(config.datasources.prod.readonly)
+    assert.are.equal("always", config.datasources.prod.confirm)
+    assert.are.same({ service = "abcql", account = "prod-db-password" }, config.datasources.prod.secret)
+
+    -- table entry -> string entry
+    assert.is_true(Loader.update_datasource_in_file(path, "prod", { dsn = "mysql://u:p@h/plain" }))
+    assert.are.equal("mysql://u:p@h/plain", dofile(path).datasources.prod)
+
+    ok, err = Loader.update_datasource_in_file(path, "missing", { dsn = "mysql://u@h/db" })
+    assert.is_false(ok)
+    assert.is_not_nil(err:find("not found", 1, true))
+  end)
+
+  it("fails cleanly when there is no datasources table", function()
+    local path = dir .. "/.abcql.lua"
+    local f = assert(io.open(path, "w"))
+    f:write("return {}\n")
+    f:close()
+    local ok, err = Loader.add_datasource_to_file(path, "dev", { dsn = "mysql://u@h/db" })
+    assert.is_false(ok)
+    assert.is_not_nil(err:find("datasources = {", 1, true))
+  end)
+end)
