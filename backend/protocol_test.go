@@ -57,3 +57,13 @@ func TestProxyConfigPortAcceptsString(t *testing.T) {
 		t.Errorf("Proxy.Port = %+v, want 1080", req.Proxy)
 	}
 }
+
+func TestRequestMaxRows(t *testing.T) {
+	var req Request
+	if err := json.Unmarshal([]byte(`{"sql":"select 1","max_rows":"250"}`), &req); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if req.MaxRows != 250 {
+		t.Errorf("MaxRows = %d, want 250", req.MaxRows)
+	}
+}

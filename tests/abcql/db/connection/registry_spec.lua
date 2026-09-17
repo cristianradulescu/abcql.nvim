@@ -110,7 +110,8 @@ describe("ConnectionRegistry", function()
             password = "dsnpass",
             database = "db",
             options = {},
-          }, nil
+          },
+            nil
         end,
       }
 
@@ -190,5 +191,35 @@ describe("ConnectionRegistry", function()
       assert.is_nil(ds)
       assert.is_truthy(err:match("Failed to resolve keyring secret"))
     end)
+  end)
+end)
+
+describe("ConnectionRegistry datasource flags", function()
+  local MockAdapter = {
+    new = function(config)
+      return { config = config }
+    end,
+  }
+
+  it("defaults readonly to false and leaves confirm/highlight unset", function()
+    local registry = Registry.new()
+    registry:register_adapter("mysql", MockAdapter)
+    local ds = registry:register_datasource("dev", "mysql://u:p@localhost:3306/db")
+    assert.is_false(ds.readonly)
+    assert.is_nil(ds.confirm)
+    assert.is_nil(ds.highlight)
+  end)
+
+  it("stores readonly, confirm and highlight from opts", function()
+    local registry = Registry.new()
+    registry:register_adapter("mysql", MockAdapter)
+    local ds = registry:register_datasource("prod", "mysql://u:p@localhost:3306/db", nil, nil, {
+      readonly = true,
+      confirm = "always",
+      highlight = "DiagnosticError",
+    })
+    assert.is_true(ds.readonly)
+    assert.are.equal("always", ds.confirm)
+    assert.are.equal("DiagnosticError", ds.highlight)
   end)
 end)

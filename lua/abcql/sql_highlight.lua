@@ -2,6 +2,10 @@ local M = {}
 
 local NS = vim.api.nvim_create_namespace("abcql_sql_keywords")
 
+local function highlight(bufnr, row, s, e)
+  pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, s, { end_col = e, hl_group = "Keyword" })
+end
+
 local function apply(bufnr)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return
@@ -24,7 +28,7 @@ local function apply(bufnr)
       if not s then
         break
       end
-      vim.api.nvim_buf_add_highlight(bufnr, NS, "Keyword", row - 1, s - 1, e)
+      highlight(bufnr, row - 1, s - 1, e)
       start_idx = e + 1
     end
 
@@ -34,7 +38,7 @@ local function apply(bufnr)
       if not s then
         break
       end
-      vim.api.nvim_buf_add_highlight(bufnr, NS, "Keyword", row - 1, s - 1, e)
+      highlight(bufnr, row - 1, s - 1, e)
       start_idx = e + 1
     end
 
@@ -44,7 +48,7 @@ local function apply(bufnr)
       if not s then
         break
       end
-      vim.api.nvim_buf_add_highlight(bufnr, NS, "Keyword", row - 1, s - 1, e)
+      highlight(bufnr, row - 1, s - 1, e)
       start_idx = e + 1
     end
   end

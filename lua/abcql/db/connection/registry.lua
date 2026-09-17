@@ -1,4 +1,9 @@
----@alias Datasource { name: string, dsn: string, adapter?: abcql.db.adapter.Adapter }
+---@class DatasourceOpts
+---@field readonly? boolean Refuse statements that modify data or schema
+---@field confirm? "always"|"writes"|"never" Per-datasource confirmation policy
+---@field highlight? string Highlight group for the winbar label
+
+---@alias Datasource { name: string, dsn: string, adapter?: abcql.db.adapter.Adapter, readonly: boolean, confirm?: string, highlight?: string }
 
 ---@class abcql.db.connection.Registry
 ---@field private adapters table<string, abcql.db.adapter.Adapter> Registered adapter classes by scheme
@@ -50,9 +55,11 @@ end
 --- @param dsn string The data source name (DSN) string
 --- @param proxy? string SOCKS proxy URL (e.g., "socks5://localhost:1080")
 --- @param secret? table Secret reference for keyring lookup
+--- @param opts? DatasourceOpts Safety flags (readonly / confirm / highlight)
 --- @return Datasource|nil The registered data source if successful, nil otherwise
 --- @return string|nil Error message if registration failed
-function Registry:register_datasource(name, dsn, proxy, secret)
+function Registry:register_datasource(name, dsn, proxy, secret, opts)
+  opts = opts or {}
   -- Check if data source already exists
   if self.datasources[name] then
     return self.datasources[name], nil
@@ -90,6 +97,9 @@ function Registry:register_datasource(name, dsn, proxy, secret)
     name = name,
     dsn = dsn,
     adapter = adapter,
+    readonly = opts.readonly == true,
+    confirm = opts.confirm,
+    highlight = opts.highlight,
   }
 
   self.datasources = vim.tbl_extend("force", self.datasources, { [name] = datasource })

@@ -12,6 +12,9 @@ local M = {}
 --- @field dsn string The connection string (with env vars expanded)
 --- @field proxy? string SOCKS proxy URL (e.g., "socks5://127.0.0.1:1080")
 --- @field secret? abcql.SecretRef Secret reference for credential lookup
+--- @field readonly? boolean Refuse to run statements that modify data or schema
+--- @field confirm? "always"|"writes"|"never" Per-datasource confirmation policy (overrides query.confirm)
+--- @field highlight? string Highlight group used for this datasource in the winbar
 --- @field source abcql.DatasourceSource Where this datasource was loaded from
 --- @field source_path? string Path to the config file (nil for "config" source)
 
@@ -52,8 +55,19 @@ M.CONFIG_TEMPLATE = [[
 --     dsn = "mysql://user:password@db-internal:3306/database",
 --     proxy = "socks5://127.0.0.1:1080",
 --   },
+--
+-- Safety flags (all optional):
+--   prod = {
+--     dsn = "mysql://user:password@db-internal:3306/database",
+--     readonly = true,             -- refuse INSERT/UPDATE/DELETE/DDL
+--     confirm = "always",          -- "always" | "writes" | "never"
+--     highlight = "DiagnosticError", -- winbar highlight group
+--   },
 
 return {
+  -- Datasource attached automatically to SQL buffers in this project
+  -- (can be overridden per file with a `-- abcql: <name>` comment).
+  -- default = "dev",
   datasources = {
     -- dev = "mysql://user:password@localhost:3306/database",
   },
@@ -132,39 +146,47 @@ function M.get_local_config_path()
   return vim.fn.getcwd() .. "/" .. M.CONFIG_FILE_NAME
 end
 
---- Normalize a datasource value into dsn and proxy fields
---- Supports both string DSNs and table configs with {dsn=..., proxy=...}
+--- Normalize a datasource value into a loaded datasource entry
+--- Supports both string DSNs and table configs with {dsn=..., proxy=..., readonly=..., ...}
 --- @param value string|table The raw datasource value
---- @return string dsn The connection string
---- @return string|nil proxy The proxy URL if configured
---- @return abcql.SecretRef|nil secret Secret reference if configured
-local function normalize_datasource(value)
-  if type(value) == "string" then
-    return value, nil, nil
-  elseif type(value) == "table" then
-    return value.dsn, value.proxy, value.secret
+--- @param source abcql.DatasourceSource
+--- @param source_path string|nil
+--- @return abcql.LoadedDatasource
+local function normalize_datasource(value, source, source_path)
+  local entry = {
+    source = source,
+    source_path = source_path,
+  }
+
+  if type(value) == "table" then
+    entry.dsn = M.expand_env_vars(value.dsn)
+    entry.proxy = value.proxy and M.expand_env_vars(value.proxy) or nil
+    entry.secret = value.secret
+    entry.readonly = value.readonly == true or nil
+    entry.confirm = value.confirm
+    entry.highlight = value.highlight
+  else
+    entry.dsn = M.expand_env_vars(value)
   end
-  return value, nil, nil
+
+  return entry
 end
 
 --- Load datasources from all config sources
---- Returns merged datasources with source tracking
+--- Returns merged datasources with source tracking, plus the resolved
+--- `default` datasource name (local config > user config > setup()).
 --- @param setup_datasources? table<string, string|table> Datasources from setup() call
+--- @param setup_default? string Default datasource name from setup()
 --- @return table<string, abcql.LoadedDatasource> Merged datasources with metadata
-function M.load_all_datasources(setup_datasources)
+--- @return string|nil default Default datasource name, if any
+function M.load_all_datasources(setup_datasources, setup_default)
   local result = {}
+  local default = setup_default
 
   -- 1. First, add setup() datasources (lowest priority)
   if setup_datasources then
     for name, value in pairs(setup_datasources) do
-      local dsn, proxy, secret = normalize_datasource(value)
-      result[name] = {
-        dsn = M.expand_env_vars(dsn),
-        proxy = proxy and M.expand_env_vars(proxy) or nil,
-        secret = secret,
-        source = "config",
-        source_path = nil,
-      }
+      result[name] = normalize_datasource(value, "config", nil)
     end
   end
 
@@ -172,16 +194,12 @@ function M.load_all_datasources(setup_datasources)
   local user_config, user_err = M.load_config_file(M.USER_DATASOURCES_PATH)
   if user_err then
     vim.notify(user_err, vim.log.levels.ERROR)
-  elseif user_config and user_config.datasources then
-    for name, value in pairs(user_config.datasources) do
-      local dsn, proxy, secret = normalize_datasource(value)
-      result[name] = {
-        dsn = M.expand_env_vars(dsn),
-        proxy = proxy and M.expand_env_vars(proxy) or nil,
-        secret = secret,
-        source = "user",
-        source_path = M.USER_DATASOURCES_PATH,
-      }
+  elseif user_config then
+    for name, value in pairs(user_config.datasources or {}) do
+      result[name] = normalize_datasource(value, "user", M.USER_DATASOURCES_PATH)
+    end
+    if type(user_config.default) == "string" then
+      default = user_config.default
     end
   end
 
@@ -190,20 +208,21 @@ function M.load_all_datasources(setup_datasources)
   local local_config, local_err = M.load_config_file(local_path)
   if local_err then
     vim.notify(local_err, vim.log.levels.ERROR)
-  elseif local_config and local_config.datasources then
-    for name, value in pairs(local_config.datasources) do
-      local dsn, proxy, secret = normalize_datasource(value)
-      result[name] = {
-        dsn = M.expand_env_vars(dsn),
-        proxy = proxy and M.expand_env_vars(proxy) or nil,
-        secret = secret,
-        source = "local",
-        source_path = local_path,
-      }
+  elseif local_config then
+    for name, value in pairs(local_config.datasources or {}) do
+      result[name] = normalize_datasource(value, "local", local_path)
+    end
+    if type(local_config.default) == "string" then
+      default = local_config.default
     end
   end
 
-  return result
+  if default and not result[default] then
+    vim.notify(string.format("abcql: default datasource '%s' is not configured", default), vim.log.levels.WARN)
+    default = nil
+  end
+
+  return result, default
 end
 
 --- Get only the DSN strings from loaded datasources
@@ -217,13 +236,20 @@ function M.get_dsn_map(loaded_datasources)
   return result
 end
 
---- Get datasource configs with DSN and optional proxy
+--- Get datasource configs with DSN, optional proxy/secret and safety flags
 --- @param loaded_datasources table<string, abcql.LoadedDatasource>
---- @return table<string, { dsn: string, proxy?: string, secret?: abcql.SecretRef }> name -> config mapping
+--- @return table<string, { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string }> name -> config mapping
 function M.get_datasource_configs(loaded_datasources)
   local result = {}
   for name, data in pairs(loaded_datasources) do
-    result[name] = { dsn = data.dsn, proxy = data.proxy, secret = data.secret }
+    result[name] = {
+      dsn = data.dsn,
+      proxy = data.proxy,
+      secret = data.secret,
+      readonly = data.readonly,
+      confirm = data.confirm,
+      highlight = data.highlight,
+    }
   end
   return result
 end

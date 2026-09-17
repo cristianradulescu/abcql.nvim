@@ -50,6 +50,9 @@ type Request struct {
 	Proxy     *ProxyConfig      `json:"proxy"`
 	SQL       string            `json:"sql"`
 	TimeoutMs flexInt           `json:"timeout_ms"`
+	// MaxRows caps the number of rows returned for a result set; 0 means no
+	// cap. When the cap is hit, Response.Truncated is set.
+	MaxRows flexInt `json:"max_rows"`
 }
 
 // ProxyConfig describes a SOCKS proxy to dial the database connection through.
@@ -76,6 +79,7 @@ type Response struct {
 	MatchedRows  int64      `json:"matched_rows"`
 	ChangedRows  int64      `json:"changed_rows"`
 	Warnings     int        `json:"warnings"`
+	Truncated    bool       `json:"truncated,omitempty"`
 	DurationMs   float64    `json:"duration_ms,omitempty"`
 	Error        string     `json:"error,omitempty"`
 }

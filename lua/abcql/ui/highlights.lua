@@ -10,6 +10,27 @@ function M.clear(buf)
   vim.api.nvim_buf_clear_namespace(buf, M.ns, 0, -1)
 end
 
+--- Highlight a byte range on a line via an extmark (nvim_buf_add_highlight is deprecated)
+--- @param buf number Buffer ID
+--- @param group string Highlight group
+--- @param line number 0-indexed line
+--- @param col_start number 0-indexed start byte
+--- @param col_end number End byte (exclusive), or -1 for end of line
+function M.add(buf, group, line, col_start, col_end)
+  if line < 0 or line >= vim.api.nvim_buf_line_count(buf) then
+    return
+  end
+  local opts = { hl_group = group, priority = 100 }
+  if col_end == -1 then
+    opts.end_row = line + 1
+    opts.end_col = 0
+    opts.hl_eol = true
+  else
+    opts.end_col = col_end
+  end
+  pcall(vim.api.nvim_buf_set_extmark, buf, M.ns, line, col_start, opts)
+end
+
 --- Define highlight groups with sensible defaults
 --- These link to existing highlight groups so they adapt to the user's colorscheme
 function M.setup()
@@ -41,6 +62,19 @@ function M.setup()
   -- History query display
   vim.api.nvim_set_hl(0, "AbcqlQueryLabel", { link = "Title", default = true })
   vim.api.nvim_set_hl(0, "AbcqlQueryText", { link = "String", default = true })
+
+  -- Winbar (editor datasource label + results context)
+  vim.api.nvim_set_hl(0, "AbcqlWinbarLabel", { link = "Title", default = true })
+  vim.api.nvim_set_hl(0, "AbcqlDatasource", { link = "Function", default = true })
+  vim.api.nvim_set_hl(0, "AbcqlReadonly", { link = "DiagnosticWarn", default = true })
+  vim.api.nvim_set_hl(0, "AbcqlRunning", { link = "DiagnosticInfo", default = true })
+  vim.api.nvim_set_hl(0, "AbcqlTruncated", { link = "DiagnosticWarn", default = true })
+
+  -- Datasource tree
+  vim.api.nvim_set_hl(0, "AbcqlTreeTitle", { link = "Title", default = true })
+  vim.api.nvim_set_hl(0, "AbcqlTreeIcon", { link = "Special", default = true })
+  vim.api.nvim_set_hl(0, "AbcqlTreeType", { link = "Comment", default = true })
+  vim.api.nvim_set_hl(0, "AbcqlTreeActive", { link = "Function", default = true })
 end
 
 --- Check if a string looks like a number
@@ -83,11 +117,11 @@ function M.apply_highlights(buf, results, line_offset, widths)
   local lines = vim.api.nvim_buf_get_lines(buf, line_offset, line_offset + 4 + #rows, false)
 
   -- Line 0: Top border
-  vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlBorder", line_offset, 0, -1)
+  M.add(buf, "AbcqlBorder", line_offset, 0, -1)
 
   -- Line 1: Header row - highlight entire line as border, then overlay header text
   local header_line = line_offset + 1
-  vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlBorder", header_line, 0, -1)
+  M.add(buf, "AbcqlBorder", header_line, 0, -1)
 
   -- Calculate byte positions by finding the vertical bar positions in the actual line
   local header_line_content = lines[2] or ""
@@ -118,12 +152,12 @@ function M.apply_highlights(buf, results, line_offset, widths)
       local start_byte = col_info.start - 1 -- 0-indexed for nvim API
       local header_text = tostring(headers[i])
       local end_byte = start_byte + #header_text
-      vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlHeader", header_line, start_byte, end_byte)
+      M.add(buf, "AbcqlHeader", header_line, start_byte, end_byte)
     end
   end
 
   -- Line 2: Header separator
-  vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlHeaderSeparator", line_offset + 2, 0, -1)
+  M.add(buf, "AbcqlHeaderSeparator", line_offset + 2, 0, -1)
 
   -- Data rows
   for row_idx, row in ipairs(rows) do
@@ -131,7 +165,7 @@ function M.apply_highlights(buf, results, line_offset, widths)
     local row_hl = (row_idx % 2 == 0) and "AbcqlRowEven" or "AbcqlRowOdd"
 
     -- Apply alternating row background to entire line
-    vim.api.nvim_buf_add_highlight(buf, M.ns, row_hl, line_num, 0, -1)
+    M.add(buf, row_hl, line_num, 0, -1)
 
     -- Highlight individual cells based on content
     for i, col_info in ipairs(col_byte_positions) do
@@ -159,13 +193,13 @@ function M.apply_highlights(buf, results, line_offset, widths)
         cell_hl = "AbcqlString"
       end
 
-      vim.api.nvim_buf_add_highlight(buf, M.ns, cell_hl, line_num, start_byte, end_byte)
+      M.add(buf, cell_hl, line_num, start_byte, end_byte)
     end
   end
 
   -- Bottom border line
   local bottom_line = line_offset + 3 + #rows
-  vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlBorder", bottom_line, 0, -1)
+  M.add(buf, "AbcqlBorder", bottom_line, 0, -1)
 end
 
 --- Apply highlights for error display
@@ -174,7 +208,7 @@ end
 --- @param end_line number Ending line (0-indexed, exclusive)
 function M.apply_error_highlights(buf, start_line, end_line)
   for line = start_line, end_line - 1 do
-    vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlError", line, 0, -1)
+    M.add(buf, "AbcqlError", line, 0, -1)
   end
 end
 
@@ -184,11 +218,11 @@ end
 --- @param end_line number Ending line (0-indexed, exclusive)
 function M.apply_write_highlights(buf, start_line, end_line)
   -- First non-empty line is the success message
-  vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlSuccess", start_line + 1, 0, -1)
+  M.add(buf, "AbcqlSuccess", start_line + 1, 0, -1)
 
   -- Rest is metadata
   for line = start_line + 2, end_line - 1 do
-    vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlFooter", line, 0, -1)
+    M.add(buf, "AbcqlFooter", line, 0, -1)
   end
 end
 
@@ -196,7 +230,7 @@ end
 --- @param buf number Buffer ID
 --- @param line_num number Line number (0-indexed)
 function M.apply_footer_highlight(buf, line_num)
-  vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlFooter", line_num, 0, -1)
+  M.add(buf, "AbcqlFooter", line_num, 0, -1)
 end
 
 --- Apply highlights for query section in history view
@@ -208,19 +242,19 @@ function M.apply_query_highlights(buf, query_line_count)
   end
 
   -- Line 1 (0-indexed: 1): "Query:" label
-  vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlQueryLabel", 1, 0, -1)
+  M.add(buf, "AbcqlQueryLabel", 1, 0, -1)
   -- Line 2 (0-indexed: 2): separator "──────"
-  vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlBorder", 2, 0, -1)
+  M.add(buf, "AbcqlBorder", 2, 0, -1)
 
   -- Query text lines (simple highlighting)
   for line = 3, query_line_count - 3 do
-    vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlQueryText", line, 0, -1)
+    M.add(buf, "AbcqlQueryText", line, 0, -1)
   end
 
   -- "Results:" label (query_line_count - 2)
-  vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlQueryLabel", query_line_count - 2, 0, -1)
+  M.add(buf, "AbcqlQueryLabel", query_line_count - 2, 0, -1)
   -- Separator "────────" (query_line_count - 1)
-  vim.api.nvim_buf_add_highlight(buf, M.ns, "AbcqlBorder", query_line_count - 1, 0, -1)
+  M.add(buf, "AbcqlBorder", query_line_count - 1, 0, -1)
 end
 
 return M

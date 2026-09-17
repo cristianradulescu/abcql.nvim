@@ -43,6 +43,54 @@ end, {
   desc = "Toggle visibility of the ABCQL data source tree panel",
 })
 
+--- Execute the statement under the cursor
+vim.api.nvim_create_user_command("AbcqlExecute", function()
+  require("abcql.db.query").execute_query_at_cursor()
+end, {
+  desc = "Execute the SQL statement under the cursor",
+})
+
+--- Execute the visual selection as one statement
+vim.api.nvim_create_user_command("AbcqlExecuteSelection", function()
+  require("abcql.db.query").execute_selection()
+end, {
+  desc = "Execute the visually selected SQL",
+  range = true,
+})
+
+--- Execute every statement in the buffer, in order
+vim.api.nvim_create_user_command("AbcqlExecuteBuffer", function()
+  require("abcql.db.query").execute_buffer()
+end, {
+  desc = "Execute all SQL statements in the current buffer sequentially",
+})
+
+--- Cancel the running query
+vim.api.nvim_create_user_command("AbcqlCancel", function()
+  require("abcql.db.query").cancel()
+end, {
+  desc = "Cancel the running abcql query",
+})
+
+--- Attach a datasource to the current buffer (prompts when no name is given)
+vim.api.nvim_create_user_command("AbcqlDatasource", function(opts)
+  local name = opts.args ~= "" and opts.args or nil
+  require("abcql.db").activate_datasource(vim.api.nvim_get_current_buf(), name)
+end, {
+  desc = "Attach a datasource to the current buffer",
+  nargs = "?",
+  complete = function()
+    return require("abcql.db").get_datasource_names()
+  end,
+})
+
+--- Pick a past query from history (re-run, insert or show its result)
+vim.api.nvim_create_user_command("AbcqlHistory", function()
+  require("abcql.history").pick({ bufnr = vim.api.nvim_get_current_buf() })
+end, {
+  desc = "Browse query history",
+})
+
 --- Export current query results to CSV format
 --- Saves to current working directory with timestamp
 vim.api.nvim_create_user_command("AbcqlExportCsv", function()
@@ -160,18 +208,23 @@ end, {
   desc = "Reload datasources from config files",
 })
 
---- Navigate to previous query in history
-vim.api.nvim_create_user_command("AbcqlHistoryBack", function()
+local function display_history_entry(entry)
   local History = require("abcql.history")
   local UI = require("abcql.ui")
-  local entry = History.go_back()
+  local pos, total = History.get_position()
+  local display_opts = {
+    query = entry.query,
+    history_position = string.format("history %d/%d", pos, total),
+    datasource = { name = entry.datasource, adapter = { config = { database = entry.database } } },
+  }
+  UI.display(entry.error or entry.result, nil, display_opts)
+end
 
+--- Navigate to previous query in history
+vim.api.nvim_create_user_command("AbcqlHistoryBack", function()
+  local entry = require("abcql.history").go_back()
   if entry then
-    if entry.error then
-      UI.display(entry.error, "[abcql] History")
-    elseif entry.result then
-      UI.display(entry.result, "[abcql] History")
-    end
+    display_history_entry(entry)
   end
 end, {
   desc = "Navigate to previous query in history",
@@ -179,9 +232,8 @@ end, {
 
 --- Navigate to next query in history (toward latest)
 vim.api.nvim_create_user_command("AbcqlHistoryForward", function()
-  local History = require("abcql.history")
   local UI = require("abcql.ui")
-  local entry, is_latest = History.go_forward()
+  local entry, is_latest = require("abcql.history").go_forward()
 
   if is_latest then
     local results = UI.get_current_results()
@@ -189,11 +241,7 @@ vim.api.nvim_create_user_command("AbcqlHistoryForward", function()
       UI.display(results)
     end
   elseif entry then
-    if entry.error then
-      UI.display(entry.error, "[abcql] History")
-    elseif entry.result then
-      UI.display(entry.result, "[abcql] History")
-    end
+    display_history_entry(entry)
   end
 end, {
   desc = "Navigate to next query in history",

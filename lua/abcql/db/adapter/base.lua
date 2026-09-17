@@ -96,10 +96,22 @@ end
 --- (already parsed/secret-resolved by abcql.db.connection.registry), so most
 --- adapters shouldn't need to override this.
 --- @param query string The SQL query to execute
---- @param opts table|nil Optional parameters (database?: string, timeout?: number in ms)
+--- @param opts table|nil Optional parameters (database?: string, timeout?: number in ms, max_rows?: number)
 --- @return table request
 function Adapter:build_backend_request(query, opts)
   opts = opts or {}
+
+  local timeout = opts.timeout
+  local max_rows = opts.max_rows
+  local ok, config = pcall(require, "abcql.config")
+  if ok and type(config) == "table" then
+    if timeout == nil and type(config.backend) == "table" then
+      timeout = config.backend.timeout_ms
+    end
+    if max_rows == nil and type(config.query) == "table" then
+      max_rows = config.query.max_rows
+    end
+  end
 
   -- vim.json.encode has no way to tell an empty map from an empty array, and
   -- defaults to `[]` for an empty plain Lua table -- which Go's
@@ -118,7 +130,8 @@ function Adapter:build_backend_request(query, opts)
     database = opts.database or self.config.database,
     options = options,
     sql = query,
-    timeout_ms = opts.timeout,
+    timeout_ms = timeout,
+    max_rows = max_rows,
   }
 
   if self.config.proxy then

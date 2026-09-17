@@ -202,6 +202,46 @@ describe("Config Loader", function()
     end)
   end)
 
+  describe("datasource flags and default", function()
+    it("carries readonly/confirm/highlight through to datasource configs", function()
+      local loaded = Loader.load_all_datasources({
+        prod = {
+          dsn = "mysql://user:pass@host:3306/db",
+          readonly = true,
+          confirm = "always",
+          highlight = "DiagnosticError",
+        },
+        dev = "mysql://user:pass@localhost:3306/db",
+      })
+      assert.is_true(loaded.prod.readonly)
+      assert.are.equal("always", loaded.prod.confirm)
+      assert.are.equal("DiagnosticError", loaded.prod.highlight)
+      assert.is_nil(loaded.dev.readonly)
+
+      local configs = Loader.get_datasource_configs(loaded)
+      assert.is_true(configs.prod.readonly)
+      assert.are.equal("always", configs.prod.confirm)
+      assert.are.equal("DiagnosticError", configs.prod.highlight)
+    end)
+
+    it("returns the setup default when it names a configured datasource", function()
+      local _, default = Loader.load_all_datasources({ dev = "mysql://user:pass@localhost:3306/db" }, "dev")
+      assert.are.equal("dev", default)
+    end)
+
+    it("drops a default that is not configured", function()
+      local warned = false
+      vim.notify = function(msg)
+        if msg:match("default datasource") then
+          warned = true
+        end
+      end
+      local _, default = Loader.load_all_datasources({ dev = "mysql://user:pass@localhost:3306/db" }, "nope")
+      assert.is_nil(default)
+      assert.is_true(warned)
+    end)
+  end)
+
   describe("CONFIG_TEMPLATE", function()
     it("should contain example datasource format", function()
       assert.is_true(Loader.CONFIG_TEMPLATE:match("datasources") ~= nil)

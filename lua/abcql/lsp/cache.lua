@@ -44,7 +44,9 @@ function Cache:load_schema(datasource_name, adapter, callback)
 
   -- Step 1: Load databases
   adapter:get_databases(function(databases, err)
-    if errored then return end
+    if errored then
+      return
+    end
     if err then
       errored = true
       callback("Failed to load databases: " .. err)
@@ -62,7 +64,9 @@ function Cache:load_schema(datasource_name, adapter, callback)
 
     for _, db in ipairs(databases) do
       adapter:get_tables(db, function(tables, tables_err)
-        if errored then return end
+        if errored then
+          return
+        end
         if tables_err then
           errored = true
           callback("Failed to load tables for database '" .. db .. "': " .. tables_err)
@@ -83,7 +87,9 @@ function Cache:load_schema(datasource_name, adapter, callback)
 
         for _, table_name in ipairs(tables) do
           adapter:get_columns(db, table_name, function(columns, columns_err)
-            if errored then return end
+            if errored then
+              return
+            end
             if columns_err then
               errored = true
               callback("Failed to load columns for table '" .. db .. "." .. table_name .. "': " .. columns_err)

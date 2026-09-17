@@ -97,7 +97,7 @@ func execRequest(req *Request) (*Response, error) {
 	if isWriteQuery(req.SQL) {
 		resp, err = execWrite(ctx, db, req.SQL)
 	} else {
-		resp, err = execQuery(ctx, db, req.SQL)
+		resp, err = execQuery(ctx, db, req.SQL, int(req.MaxRows))
 	}
 	if err != nil {
 		return nil, err
@@ -136,7 +136,50 @@ func execWrite(ctx context.Context, db *sql.DB, query string) (*Response, error)
 	}, nil
 }
 
-func execQuery(ctx context.Context, db *sql.DB, query string) (*Response, error) {
+// rowScanner is the subset of *sql.Rows collectRows needs, so the row-cap
+// logic can be unit tested without a database.
+type rowScanner interface {
+	Next() bool
+	Scan(dest ...interface{}) error
+	Err() error
+}
+
+// collectRows drains rows into string cells, stopping after maxRows rows
+// (when maxRows > 0). The second return value reports whether more rows were
+// available beyond the cap.
+func collectRows(rows rowScanner, columnCount int, maxRows int) ([][]string, bool, error) {
+	result := make([][]string, 0)
+	values := make([]interface{}, columnCount)
+	scanDest := make([]interface{}, columnCount)
+	for i := range values {
+		scanDest[i] = &values[i]
+	}
+
+	truncated := false
+	for rows.Next() {
+		if maxRows > 0 && len(result) >= maxRows {
+			truncated = true
+			break
+		}
+		if err := rows.Scan(scanDest...); err != nil {
+			return nil, false, err
+		}
+		row := make([]string, columnCount)
+		for i, v := range values {
+			row[i] = formatValue(v)
+		}
+		result = append(result, row)
+	}
+	if !truncated {
+		if err := rows.Err(); err != nil {
+			return nil, false, err
+		}
+	}
+
+	return result, truncated, nil
+}
+
+func execQuery(ctx context.Context, db *sql.DB, query string, maxRows int) (*Response, error) {
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -148,24 +191,8 @@ func execQuery(ctx context.Context, db *sql.DB, query string) (*Response, error)
 		return nil, err
 	}
 
-	result := make([][]string, 0)
-	values := make([]interface{}, len(columns))
-	scanDest := make([]interface{}, len(columns))
-	for i := range values {
-		scanDest[i] = &values[i]
-	}
-
-	for rows.Next() {
-		if err := rows.Scan(scanDest...); err != nil {
-			return nil, err
-		}
-		row := make([]string, len(columns))
-		for i, v := range values {
-			row[i] = formatValue(v)
-		}
-		result = append(result, row)
-	}
-	if err := rows.Err(); err != nil {
+	result, truncated, err := collectRows(rows, len(columns), maxRows)
+	if err != nil {
 		return nil, err
 	}
 
@@ -174,6 +201,7 @@ func execQuery(ctx context.Context, db *sql.DB, query string) (*Response, error)
 		Headers:   columns,
 		Rows:      result,
 		RowCount:  len(result),
+		Truncated: truncated,
 	}, nil
 }
 

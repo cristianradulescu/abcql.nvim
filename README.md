@@ -12,9 +12,15 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
 ## Features
 
 - Connect to MySQL databases via connection strings
-- Manage multiple datasources/environments
-- Interactive query execution with results in split windows  
-- Schema and table explorer (toggle with `<leader>ST`; hidden by default)
+- Manage multiple datasources/environments, with a per-project default and per-file
+  `-- abcql: <name>` overrides so `.sql` files attach themselves
+- Run the statement under the cursor, a visual selection, or a whole file; cancel long queries
+- Confirmation prompts only for statements that write (configurable), `readonly` datasources
+- Results panel with cell popup/yank, cell motions, row cap, and a context winbar
+  (datasource, statement, row count, duration)
+- Schema and table explorer (toggle with `<leader>ST`; hidden by default) with reload, filter,
+  and yank/insert of qualified names
+- Query history with a picker to re-run or paste past queries
 - Export query results to CSV, TSV, and JSON formats
 - SQL completion with LSP support (databases, tables, columns, keywords)
 - Queries run through `abcql-backend`, a small Go binary bundled in this repo that talks to MySQL
@@ -45,7 +51,10 @@ once (and again after each plugin update) — see [Backend](#backend).
     vim.keymap.set({ "n" }, "<leader>ST", function() abcql_ui.toggle_tree() end, { desc = "abcql tree" })
     vim.keymap.set({ "n" }, "<leader>SR", function() abcql_ui.toggle_results() end, { desc = "abcql results" })
     vim.keymap.set({ "n" }, "<leader>Se", function() require("abcql.db.query").execute_query_at_cursor() end, { desc = "abcql execute query" })
+    vim.keymap.set({ "x" }, "<leader>Se", "<Esc><Cmd>AbcqlExecuteSelection<CR>", { desc = "abcql execute selection" })
+    vim.keymap.set({ "n" }, "<leader>SE", function() require("abcql.db.query").execute_buffer() end, { desc = "abcql execute whole buffer" })
     vim.keymap.set({ "n" }, "<leader>SD", function() require("abcql.db").activate_datasource(vim.api.nvim_get_current_buf()) end, { desc = "abcql activate datasource" })
+    vim.keymap.set({ "n" }, "<leader>SH", function() require("abcql.history").pick() end, { desc = "abcql query history" })
     vim.keymap.set({ "n" }, "<leader>Sxc", function() require("abcql.export").export_current("csv") end, { desc = "abcql export csv" })
     vim.keymap.set({ "n" }, "<leader>Sxj", function() require("abcql.export").export_current("json") end, { desc = "abcql export json" })
   end
@@ -80,6 +89,52 @@ return {
 You can use `:AbcqlInitConfig` to generate a template file.
 
 > **Important:** Add `.abcql.lua` to your `.gitignore` to avoid committing credentials.
+
+#### Default Datasource and Per-File Overrides
+
+When you run a statement in a SQL buffer that has no datasource yet, abcql resolves one in this
+order and attaches it without prompting:
+
+1. A `-- abcql: <name>` comment in the first 10 lines of the file (`-- abcql: datasource=<name>`
+   also works)
+2. `default = "<name>"` in `.abcql.lua` (or the user config, or `setup({ default = ... })`)
+3. The datasource you picked most recently in this session (disable with
+   `query.auto_attach = false`)
+4. Otherwise the `vim.ui.select` picker opens
+
+```lua
+-- .abcql.lua
+return {
+  default = "dev",
+  datasources = {
+    dev = "mysql://user:password@localhost:3306/myapp_dev",
+    prod = { dsn = "mysql://user:password@db:3306/myapp", readonly = true },
+  },
+}
+```
+
+`:AbcqlDatasource [name]` attaches a datasource explicitly (with tab completion); without a name it
+opens the picker. The attached datasource is shown in the buffer's winbar.
+
+#### Safety Flags
+
+Table-style datasources accept three optional flags:
+
+| Flag        | Values                          | Effect                                                                 |
+|-------------|---------------------------------|------------------------------------------------------------------------|
+| `readonly`  | `true`                          | Refuses INSERT/UPDATE/DELETE/DDL; shown as `[readonly]` in the winbar  |
+| `confirm`   | `"always"`, `"writes"`, `"never"` | Overrides the global `query.confirm` policy for this datasource       |
+| `highlight` | a highlight group name          | Colors the datasource name in the winbar (e.g. `"DiagnosticError"`)   |
+
+```lua
+prod = {
+  dsn = "mysql://user@db-internal:3306/myapp",
+  secret = { service = "abcql", account = "prod-db-password" },
+  readonly = true,
+  confirm = "always",
+  highlight = "DiagnosticError",
+},
+```
 
 #### SOCKS Proxy Support
 
@@ -145,10 +200,37 @@ return {
 
 #### Datasource Commands
 
+- `:AbcqlDatasource [name]` - Attach a datasource to the current buffer (picker when no name)
 - `:AbcqlInitConfig` - Create a template `.abcql.lua` in the current directory
 - `:AbcqlInitConfig user` - Create a template in the user config directory
 - `:AbcqlListDatasources` - Show all configured datasources with their source
-- `:AbcqlReloadDatasources` - Reload datasources from config files
+- `:AbcqlReloadDatasources` - Reload datasources from config files (also rebuilds the tree)
+
+### Plugin Options
+
+Everything below is optional; these are the defaults:
+
+```lua
+require("abcql").setup({
+  default = nil,            -- datasource attached to SQL buffers automatically (see above)
+  backend = {
+    path = nil,             -- custom path to abcql-backend
+    timeout_ms = 30000,     -- per-query timeout
+  },
+  ui = {
+    results_height = 0.4,   -- fraction of the screen (< 1) or absolute number of lines
+    tree_width = 30,        -- datasource tree width in columns
+    icons = true,           -- Nerd Font icons in the tree; false for plain ASCII
+    cell_max_width = 50,    -- truncate wider cells (K shows the full value)
+  },
+  query = {
+    confirm = "writes",     -- "always" | "writes" | "never": when to show the confirmation prompt
+    max_rows = 1000,        -- rows fetched per query (0 = unlimited); the footer says when capped
+    auto_attach = true,     -- reuse the last picked datasource for new SQL buffers
+    treesitter = true,      -- use the tree-sitter sql parser for statement boundaries if installed
+  },
+})
+```
 
 ---
 
@@ -197,8 +279,71 @@ cp examples/.abcql.lua .abcql.lua
 nvim examples/queries.sql
 ```
 
-Open abcql (`:AbcqlOpen`), activate the `employees` datasource (`<leader>SD`), and run one of the
-sample queries with `<leader>Se`.
+Put the cursor on one of the sample queries and press `<leader>Se`. The example config declares
+`employees` as the default datasource (and the file carries a `-- abcql: employees` comment), so
+the datasource attaches itself, the UI opens, and the results appear below the editor.
+
+### Running Queries
+
+| Action                                   | Command / mapping                                   |
+|------------------------------------------|-----------------------------------------------------|
+| Run the statement under the cursor       | `:AbcqlExecute` (`<leader>Se` in the example config) |
+| Run the visual selection as one statement| `:AbcqlExecuteSelection` (visual `<leader>Se`)      |
+| Run every statement in the buffer        | `:AbcqlExecuteBuffer` (`<leader>SE`)                |
+| Cancel the running query                 | `:AbcqlCancel`, or `<C-c>` in the results panel     |
+| Browse history                           | `:AbcqlHistory` (`<leader>SH`)                      |
+
+Statements are split on `;` with awareness of strings, backtick identifiers and `--`/`#`/`/* */`
+comments, so several statements can share a line and a `;` inside a string does not split. When a
+tree-sitter `sql` parser is installed it is used instead whenever it parses the buffer cleanly.
+
+A confirmation float appears only for statements that write (INSERT/UPDATE/DELETE/DDL...) unless
+`query.confirm` or the datasource's `confirm` flag says otherwise. `<CR>` runs, `q`/`<Esc>` cancels.
+Running a whole buffer confirms once for the batch and stops at the first error.
+
+While a query runs the results winbar shows `running… 1.2s (<C-c> cancel)`. Cancelling kills the
+backend process and records the attempt in history.
+
+### Results Panel
+
+The winbar above the results shows the datasource/database, the statement, and the row count and
+duration. Result sets are capped at `query.max_rows`; the footer reads `showing first 1,000 rows
+(max_rows limit)` when the cap was hit.
+
+| Key             | Action                                                |
+|-----------------|-------------------------------------------------------|
+| `K` / `<CR>`    | Open the full cell value in a float (`y` yanks it)    |
+| `yc`            | Yank the cell under the cursor                        |
+| `yr`            | Yank the row under the cursor (tab-separated)         |
+| `<Tab>` / `<S-Tab>` | Move to the next / previous cell                  |
+| `<C-o>` / `<C-i>`, `[h` / `]h` | Older / newer entry in query history   |
+| `<C-c>`         | Cancel the running query                              |
+
+### Datasource Tree
+
+`:AbcqlToggleTree` (`<leader>ST`) opens the explorer to the right of the editor. It expands the
+datasource attached to the editor buffer (and the database from its DSN) automatically.
+
+| Key          | Action                                                     |
+|--------------|------------------------------------------------------------|
+| `<CR>`       | Expand / collapse (children load lazily)                   |
+| `R`          | Reload the node from the database (picks up new tables)    |
+| `r`          | Redraw                                                     |
+| `y`          | Yank the qualified, escaped name (db.table, backticked)     |
+| `i`          | Insert that name at the cursor in the editor               |
+| `f`          | Jump to a loaded table via `vim.ui.select`                 |
+| `<leader>Se` | Browse the table (`SELECT * ... LIMIT 1000`)               |
+
+Set `ui = { icons = false }` if you do not use a Nerd Font.
+
+### Query History
+
+Every execution (success, error or cancellation) is stored under `stdpath("data")/abcql/query_history`
+(last 100 entries, up to 1000 rows each). `:AbcqlHistory` opens a picker over recent entries; for the
+chosen one you can re-run it on its original datasource, insert it below the cursor, or show the
+stored result. `:AbcqlHistoryBack` / `:AbcqlHistoryForward` (or `<C-o>` / `<C-i>` in the results
+panel) step through entries in place, with the query shown above the result. `:AbcqlHistoryClear`
+and `:AbcqlHistoryInfo` are also available.
 
 ### Healthcheck
 
@@ -212,6 +357,7 @@ It validates:
 
 - The `abcql-backend` binary is present and runnable
 - Optional JSON export dependency (`jq`)
+- Optional tree-sitter `sql` parser (used for statement boundaries when present)
 - Datasource config structure
 - Linux keyring secret configuration and lookup (`secret-tool`) when `secret` refs are configured
 

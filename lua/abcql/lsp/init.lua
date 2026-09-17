@@ -36,7 +36,7 @@ function LSP.start(bufnr, datasource, callback)
 
   -- Load schema if not cached
   if not self.cache:has_cache(datasource.name) then
-    vim.notify("Loading schema for " .. datasource.name .. "...", vim.log.levels.INFO)
+    vim.notify("abcql: loading schema for " .. datasource.name .. "…", vim.log.levels.INFO)
 
     self.cache:load_schema(datasource.name, datasource.adapter, function(err)
       if err then
@@ -44,8 +44,6 @@ function LSP.start(bufnr, datasource, callback)
         callback(err)
         return
       end
-
-      vim.notify("Schema loaded for " .. datasource.name, vim.log.levels.INFO)
 
       -- Start LSP server
       self:start_server(bufnr, datasource, callback)

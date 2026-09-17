@@ -180,6 +180,103 @@ function History.clear()
   return deleted
 end
 
+--- Load a full history entry by id
+---@param id string
+---@return table|nil entry
+function History.get_entry(id)
+  local entry = Storage.read_entry(id)
+  return entry
+end
+
+--- Open a picker (vim.ui.select) over recent history entries and act on the choice:
+--- re-run, insert into the editor, or show the stored result.
+---@param opts? { limit: number?, bufnr: number? }
+function History.pick(opts)
+  opts = opts or {}
+  local entries = History.get_recent(opts.limit or 50)
+  if #entries == 0 then
+    vim.notify("abcql: no query history", vim.log.levels.INFO)
+    return
+  end
+
+  vim.ui.select(entries, {
+    prompt = "Query history:",
+    format_item = function(entry)
+      return string.format(
+        "%s %s  %-12s  %s",
+        entry.success and "✓" or "✖",
+        os.date("%Y-%m-%d %H:%M", entry.timestamp),
+        entry.datasource or "",
+        entry.query_preview
+      )
+    end,
+  }, function(choice)
+    if not choice then
+      return
+    end
+    local entry = History.get_entry(choice.id)
+    if not entry then
+      vim.notify("abcql: history entry is gone", vim.log.levels.WARN)
+      return
+    end
+
+    local actions = { "Re-run", "Insert into editor", "Show stored result" }
+    vim.ui.select(actions, { prompt = choice.query_preview }, function(action)
+      if action == "Re-run" then
+        History.rerun(entry, opts.bufnr)
+      elseif action == "Insert into editor" then
+        History.insert_into_editor(entry, opts.bufnr)
+      elseif action == "Show stored result" then
+        local UI = require("abcql.ui")
+        local display_opts = {
+          query = entry.query,
+          history_position = "history " .. os.date("%Y-%m-%d %H:%M", entry.timestamp),
+          datasource = { name = entry.datasource, adapter = { config = { database = entry.database } } },
+        }
+        UI.display(entry.error or entry.result, nil, display_opts)
+      end
+    end)
+  end)
+end
+
+--- Re-run a history entry against its original datasource (falling back to
+--- the buffer's datasource when that one no longer exists)
+---@param entry table
+---@param bufnr number|nil
+function History.rerun(entry, bufnr)
+  local Database = require("abcql.db")
+  local Query = require("abcql.db.query")
+  local datasource = entry.datasource and Database.connectionRegistry:get_datasource(entry.datasource)
+  if datasource then
+    Query.run(entry.query, datasource)
+    return
+  end
+  Database.ensure_datasource(bufnr or vim.api.nvim_get_current_buf(), function(ds)
+    if ds then
+      Query.run(entry.query, ds)
+    end
+  end)
+end
+
+--- Insert a history entry's query below the cursor of the given (or current) buffer
+---@param entry table
+---@param bufnr number|nil
+function History.insert_into_editor(entry, bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  if not vim.api.nvim_buf_is_valid(bufnr) or not vim.bo[bufnr].modifiable then
+    vim.notify("abcql: current buffer is not editable", vim.log.levels.WARN)
+    return
+  end
+  local win = vim.fn.bufwinid(bufnr)
+  local row = win ~= -1 and vim.api.nvim_win_get_cursor(win)[1] or vim.api.nvim_buf_line_count(bufnr)
+  local lines = vim.split(entry.query, "\n")
+  lines[#lines] = lines[#lines] .. ";"
+  vim.api.nvim_buf_set_lines(bufnr, row, row, false, lines)
+  if win ~= -1 then
+    vim.api.nvim_win_set_cursor(win, { row + 1, 0 })
+  end
+end
+
 --- Get a preview of recent history entries (for potential picker UI)
 ---@param limit number|nil Maximum number of entries to return (default 20)
 ---@return table[] entries Array of {id, timestamp, query_preview, datasource}

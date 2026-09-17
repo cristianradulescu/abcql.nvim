@@ -45,6 +45,16 @@ local function check_core_dependencies()
       "Install jq to use :AbcqlExportJson.",
     })
   end
+
+  local has_ts_sql = vim.treesitter
+    and vim.treesitter.language
+    and vim.treesitter.language.add
+    and pcall(vim.treesitter.language.add, "sql")
+  if has_ts_sql then
+    health.ok("tree-sitter sql parser found (used for statement boundaries when it parses cleanly)")
+  else
+    health.info("tree-sitter sql parser not installed (optional; the built-in scanner splits statements)")
+  end
 end
 
 local function load_datasources_for_health()

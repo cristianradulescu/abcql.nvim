@@ -82,3 +82,66 @@ func TestBuildDSNCustomNetwork(t *testing.T) {
 		t.Errorf("buildDSN() = %q, want %q", dsn, want)
 	}
 }
+
+// fakeRows feeds collectRows a fixed set of single-column rows.
+type fakeRows struct {
+	data []string
+	pos  int
+}
+
+func (f *fakeRows) Next() bool {
+	if f.pos >= len(f.data) {
+		return false
+	}
+	f.pos++
+	return true
+}
+
+func (f *fakeRows) Scan(dest ...interface{}) error {
+	*(dest[0].(*interface{})) = f.data[f.pos-1]
+	return nil
+}
+
+func (f *fakeRows) Err() error { return nil }
+
+func TestCollectRowsNoCap(t *testing.T) {
+	rows := &fakeRows{data: []string{"a", "b", "c"}}
+	got, truncated, err := collectRows(rows, 1, 0)
+	if err != nil {
+		t.Fatalf("collectRows() error = %v", err)
+	}
+	if truncated {
+		t.Errorf("collectRows() truncated = true, want false")
+	}
+	if len(got) != 3 || got[2][0] != "c" {
+		t.Errorf("collectRows() = %v, want 3 rows ending in c", got)
+	}
+}
+
+func TestCollectRowsCapHit(t *testing.T) {
+	rows := &fakeRows{data: []string{"a", "b", "c"}}
+	got, truncated, err := collectRows(rows, 1, 2)
+	if err != nil {
+		t.Fatalf("collectRows() error = %v", err)
+	}
+	if !truncated {
+		t.Errorf("collectRows() truncated = false, want true")
+	}
+	if len(got) != 2 {
+		t.Errorf("collectRows() returned %d rows, want 2", len(got))
+	}
+}
+
+func TestCollectRowsCapExact(t *testing.T) {
+	rows := &fakeRows{data: []string{"a", "b"}}
+	got, truncated, err := collectRows(rows, 1, 2)
+	if err != nil {
+		t.Fatalf("collectRows() error = %v", err)
+	}
+	if truncated {
+		t.Errorf("collectRows() truncated = true, want false when rows == cap")
+	}
+	if len(got) != 2 {
+		t.Errorf("collectRows() returned %d rows, want 2", len(got))
+	}
+}

@@ -366,3 +366,70 @@ describe("History", function()
     end)
   end)
 end)
+
+describe("History picker helpers", function()
+  local History
+  local original_stdpath
+  local original_notify
+  local test_dir
+
+  before_each(function()
+    test_dir = vim.fn.tempname()
+    vim.fn.mkdir(test_dir, "p")
+    original_stdpath = vim.fn.stdpath
+    vim.fn.stdpath = function(what)
+      if what == "data" then
+        return test_dir
+      end
+      return original_stdpath(what)
+    end
+    original_notify = vim.notify
+    vim.notify = function() end
+    package.loaded["abcql.history"] = nil
+    package.loaded["abcql.history.storage"] = nil
+    History = require("abcql.history")
+  end)
+
+  after_each(function()
+    vim.fn.stdpath = original_stdpath
+    vim.notify = original_notify
+    vim.fn.delete(test_dir, "rf")
+  end)
+
+  it("get_entry loads a saved entry by id", function()
+    History.save("select 1", "dev", "db", { headers = { "1" }, rows = { { "1" } } }, nil)
+    local recent = History.get_recent(1)
+    local entry = History.get_entry(recent[1].id)
+    assert.are.equal("select 1", entry.query)
+    assert.are.equal("dev", entry.datasource)
+  end)
+
+  it("insert_into_editor writes the query below the cursor with a semicolon", function()
+    local buf = vim.api.nvim_create_buf(true, false)
+    vim.api.nvim_set_current_buf(buf)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "select 0;", "select 9;" })
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    History.insert_into_editor({ query = "select 1\nfrom t" })
+    assert.are.same({ "select 0;", "select 1", "from t;", "select 9;" }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  it("pick offers the actions for the chosen entry", function()
+    History.save("select 1", "dev", "db", { headers = { "1" }, rows = { { "1" } } }, nil)
+    local prompts = {}
+    local original_select = vim.ui.select
+    vim.ui.select = function(items, opts, on_choice)
+      table.insert(prompts, opts.prompt)
+      if #prompts == 1 then
+        on_choice(items[1])
+      else
+        assert.are.same({ "Re-run", "Insert into editor", "Show stored result" }, items)
+        on_choice(nil)
+      end
+    end
+    History.pick()
+    vim.ui.select = original_select
+    assert.are.equal(2, #prompts)
+    assert.are.equal("Query history:", prompts[1])
+  end)
+end)

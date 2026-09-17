@@ -43,6 +43,8 @@ nvim --headless --noplugin -u tests/minimal_init.lua \
 
 Specs live under `tests/abcql/` mirroring `lua/abcql/` (e.g. `lua/abcql/db/query.lua` ↔
 `tests/abcql/db/query_spec.lua` — not all modules have specs yet, check before assuming one exists).
+`tests/abcql/ui/init_spec.lua` exercises the real window layout headlessly (open/toggle/display), so
+UI regressions such as a panel that can't be re-shown are caught without a database.
 The Go backend is a separate module and doesn't follow this mirroring: its tests are plain
 `backend/*_test.go` files run via `go test ./...` (`make test-backend`).
 
@@ -74,6 +76,11 @@ the JSON response straight onto `QueryResult` — there's no CLI-argv-building o
 parsing left on the Lua side. Passwords travel over the subprocess's stdin pipe only, never argv or a
 temp file.
 
+The request also carries `max_rows` (from `query.max_rows`, default 1000); the backend stops
+scanning after that many rows and sets `truncated: true`, which the results footer/winbar surface.
+`Backend.invoke` returns the `vim.system` handle so `abcql.db.query.cancel` can kill a running
+query (reported back as the error string `Query cancelled`).
+
 `MySQLAdapter:get_databases`/`get_tables`/`get_columns`/`get_constraints`/`get_indexes` are just
 `INFORMATION_SCHEMA` SQL text run through that same `Query.execute_async`, so schema introspection
 (tree view, LSP completion cache) rides the Go backend for free — no separate code path.
@@ -91,7 +98,15 @@ connection now.
 Datasources merge from three sources, later wins: `setup()` opts → `~/.config/nvim/abcql/datasources.lua`
 (user) → `.abcql.lua` in cwd (local/project, highest priority). `abcql.config.loader` does the
 merging and tags each datasource with `source`/`source_path` for `:AbcqlListDatasources`. DSN and
-proxy strings support `${VAR_NAME}` env expansion. Passwords can also be deferred to a keyring lookup
+proxy strings support `${VAR_NAME}` env expansion. Table-style datasources may also carry
+`readonly`/`confirm`/`highlight` flags, which travel through the loader and
+`registry:register_datasource(name, dsn, proxy, secret, opts)` onto the `Datasource` object; each
+config file (and `setup()`) may name a `default` datasource, same precedence. `setup()` also has
+`ui` (panel sizes, icons, cell width) and `query` (confirm policy, `max_rows`, `auto_attach`,
+`treesitter`) sections; modules read them via `require("abcql.config").ui/.query` with local
+fallbacks so they still work when config was never set up (tests).
+
+Passwords can also be deferred to a keyring lookup
 (`secret = { service, account }` in a datasource, currently Linux `secret-tool` only via
 `abcql.secret` → `abcql.secret.linux`) instead of embedding them in the DSN — resolved once at
 `registry:register_datasource` time via `abcql.secret.lookup`.
@@ -110,23 +125,43 @@ offers.
 ### UI state machine
 
 `abcql.ui` owns a single module-level `state` table (buffers/windows/visibility) for one editor +
-results + optional datasource-tree layout — there's no multi-instance support. `winfixbuf` pins the
-results/tree windows to their buffers; a `BufEnter` autocmd guard redirects any foreign buffer that
-lands there back to the editor window. `WinClosed` autocmds on the editor window tear down the whole
-layout (editor is the anchor); closing results/tree only clears that panel's state. Editor buffer
-ownership matters on `UI.close()`: buffers abcql created itself (`editor_buf_owned`) get deleted,
-pre-existing user buffers are left alone. `abcql.ui.tree` and `abcql.ui.init` have a circular
-dependency broken via `Tree.set_display_fn(...)`, registered from `UI.open`.
+results + optional datasource-tree layout — there's no multi-instance support. The results and tree
+buffers use `bufhidden=hide` (not `wipe`) so toggling a panel off keeps its buffer; `UI.display`
+calls `UI.show_results` to re-open a hidden results window rather than recreating the layout.
+`winfixbuf` pins the results/tree windows to their buffers; a `BufEnter` autocmd guard redirects any
+foreign buffer that lands there back to the editor window. `WinClosed` autocmds on the editor window
+tear down the whole layout (editor is the anchor); closing results/tree only clears that panel's
+state. Editor buffer ownership matters on `UI.close()`: buffers abcql created itself
+(`editor_buf_owned`) get deleted, pre-existing user buffers are left alone. `abcql.ui.tree` and
+`abcql.ui.init` have a circular dependency broken via `Tree.set_display_fn(...)`, registered from
+`UI.open`.
+
+Context lives in winbars, not notifications: the editor window's winbar shows the attached
+datasource (`Database.winbar_text`, re-applied on `BufWinEnter` since `winbar` is window-local) and
+the results window's winbar shows datasource/db • statement • row count/duration (or the running
+timer). Cell-level features in the results buffer (`K` popup, `yc`/`yr`, `<Tab>` motions) derive
+byte offsets from `state.current_widths` and `state.table_top_line`, so anything that changes the
+table's rendering must keep those in sync. All highlighting goes through extmarks
+(`highlights.add`); `nvim_buf_add_highlight`/`nvim_buf_set_option` are not used. The tree renders
+to `lines, highlights` and keeps its node cache across redraws; `R` (`Tree.reload_node`) drops a
+subtree and refetches, `Tree.reset()` drops everything (called from `:AbcqlReloadDatasources`).
 
 ### Query lifecycle
 
-`abcql.db.query.execute_query_at_cursor` extracts the semicolon-delimited statement under the cursor,
-shows a floating confirmation prompt (`<CR>` confirm / `q`/`<Esc>` cancel), then dispatches through
-the active buffer's datasource adapter. Every execution (success or error) is recorded via
-`abcql.history`, and results are rendered by `abcql.ui.display` (handles error strings, `write`-type
-results, and `select`-type result tables distinctly). History navigation (`<C-o>`/`<C-i>` in the
-results buffer, or `:AbcqlHistoryBack`/`Forward`) replays past query+result/error pairs into the same
-results buffer.
+`abcql.db.statements` splits buffer text into statements: a character scanner that understands
+quotes, backtick identifiers and `--`/`#`/`/* */` comments (so `;` inside those never splits, and
+several statements may share a line), with a tree-sitter `sql` pass tried first when the parser is
+installed and the tree has no errors. It also classifies statements (`is_write`: anything whose
+first keyword isn't SELECT/SHOW/DESCRIBE/EXPLAIN/WITH/USE...). `abcql.db.query` has three entry
+points, `execute_query_at_cursor`, `execute_selection` and `execute_buffer` (sequential, stops on
+first error), all of which go through `Database.ensure_datasource` and then `Query.run`. `Query.run`
+is the single execution path: readonly guard → confirmation float (policy: datasource `confirm` >
+`query.confirm`, default only for writes) → `UI.set_running` (winbar timer) → `Backend.invoke`
+(handle kept for `Query.cancel`) → `abcql.history` save → `UI.display`. Results are rendered by
+`abcql.ui.display` (error strings, `write`-type results, and `select`-type tables). History
+navigation (`<C-o>`/`<C-i>`/`[h`/`]h` in the results buffer, or `:AbcqlHistoryBack`/`Forward`)
+replays past query+result/error pairs into the same results buffer; `:AbcqlHistory` is a
+`vim.ui.select` picker (`History.pick`) that can re-run, insert, or show an entry.
 
 ### Export
 
@@ -137,5 +172,9 @@ is skipped if `jq` isn't installed (surfaced via `:checkhealth abcql`).
 ### Buffer-scoped, not global, active datasource
 
 `abcql.db.Database.buffer_datasources` maps `bufnr -> Datasource`, so different SQL buffers can be
-attached to different datasources simultaneously; activating one also starts/restarts that buffer's
-LSP client and sets its `winbar`.
+attached to different datasources simultaneously; attaching one (`Database.attach_datasource`) also
+starts/restarts that buffer's LSP client, sets its `winbar`, and fires the `User
+AbcqlDatasourceAttached` autocmd (the tree listens to mark the active datasource). Buffers without
+an attachment are resolved lazily by `Database.ensure_datasource` when a query runs: `-- abcql:
+<name>` comment in the first 10 lines → configured `default` → last used datasource (if
+`query.auto_attach`) → `vim.ui.select` prompt.

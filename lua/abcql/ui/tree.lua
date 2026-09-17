@@ -12,18 +12,26 @@ local Tree = {}
 local state = {
   root = nil,
   line_to_node = {},
-  --- @type fun(results: any, title: string?)|nil Display callback set by UI module
+  --- @type fun(results: any, title: string?, opts: table?)|nil Display callback set by UI module
   display_fn = nil,
 }
 
+local NS = vim.api.nvim_create_namespace("abcql_tree")
+
 --- Set the display callback used by browse_table_data
 --- This breaks the circular dependency between tree and UI modules
---- @param fn fun(results: any, title: string?)
+--- @param fn fun(results: any, title: string?, opts: table?)
 function Tree.set_display_fn(fn)
   state.display_fn = fn
 end
 
-local ICONS = {
+--- Drop the cached tree so the next render rebuilds it from the registry
+function Tree.reset()
+  state.root = nil
+  state.line_to_node = {}
+end
+
+local NERD_ICONS = {
   expanded = "󰅀",
   collapsed = "󰅂",
   leaf = "•",
@@ -37,6 +45,31 @@ local ICONS = {
   indexes = "󰗅",
   index = "󰗅",
 }
+
+local ASCII_ICONS = {
+  expanded = "v",
+  collapsed = ">",
+  leaf = "-",
+  datasource = "@",
+  database = "#",
+  table = "=",
+  column = "-",
+  constraints = "!",
+  primary_key = "PK",
+  foreign_key = "FK",
+  indexes = "*",
+  index = "*",
+}
+
+--- Icon set according to `ui.icons`
+--- @return table<string, string>
+local function icons()
+  local ok, config = pcall(require, "abcql.config")
+  if ok and type(config.ui) == "table" and config.ui.icons == false then
+    return ASCII_ICONS
+  end
+  return NERD_ICONS
+end
 
 --- Create a new tree node
 --- @param type "title"|"datasource"|"database"|"table"|"column"|"constraints_folder"|"constraint"|"indexes_folder"|"index" Node type
@@ -93,8 +126,11 @@ end
 
 --- Format a tree node into a display line with icon and indentation
 --- @param node TreeNode Node to format
---- @return string Formatted display line
-local function format_node_line(node)
+--- @param active_datasource string|nil Name of the datasource attached to the editor buffer
+--- @return string line Formatted display line
+--- @return { group: string, col_start: number, col_end: number }[] highlights Byte ranges to highlight
+local function format_node_line(node, active_datasource)
+  local ICONS = icons()
   local indent = get_indent(node.level)
   local icon
 
@@ -127,24 +163,42 @@ local function format_node_line(node)
   end
 
   local display_name = node.name
+  local type_suffix = nil
   if node.type == "column" and node.metadata.column_type then
-    display_name = display_name .. " (" .. node.metadata.column_type .. ")"
+    type_suffix = " (" .. node.metadata.column_type .. ")"
   end
 
   if node.level < 0 then
-    return display_name -- Root title node has no icon or indent
+    return display_name, { { group = "AbcqlTreeTitle", col_start = 0, col_end = #display_name } }
   end
 
-  return indent .. icon .. " " .. display_name
+  local highlights = {}
+  local prefix = indent .. icon .. " "
+  table.insert(highlights, { group = "AbcqlTreeIcon", col_start = #indent, col_end = #indent + #icon })
+  if node.type == "datasource" and active_datasource == node.name then
+    display_name = display_name .. " (active)"
+    table.insert(highlights, { group = "AbcqlTreeActive", col_start = #prefix, col_end = #prefix + #display_name })
+  end
+  local line = prefix .. display_name
+  if type_suffix then
+    table.insert(highlights, { group = "AbcqlTreeType", col_start = #line, col_end = #line + #type_suffix })
+    line = line .. type_suffix
+  end
+
+  return line, highlights
 end
 
 --- Render the tree into display lines and build line-to-node mapping
 --- Only expanded nodes and their visible children are included in the output
 --- @param root TreeNode Root node to render
---- @return string[] Array of formatted display lines
-function Tree.render(root)
+--- @param opts? { active_datasource: string? }
+--- @return string[] lines Array of formatted display lines
+--- @return table[] highlights Array of { line (0-indexed), group, col_start, col_end }
+function Tree.render(root, opts)
+  opts = opts or {}
   state.line_to_node = {}
   local lines = {}
+  local highlights = {}
   local line_num = 1
 
   local function render_node(node)
@@ -152,8 +206,12 @@ function Tree.render(root)
       return
     end
 
-    local line = format_node_line(node)
+    local line, line_highlights = format_node_line(node, opts.active_datasource)
     table.insert(lines, line)
+    for _, hl in ipairs(line_highlights) do
+      hl.line = line_num - 1
+      table.insert(highlights, hl)
+    end
     state.line_to_node[line_num] = node
     line_num = line_num + 1
 
@@ -167,7 +225,20 @@ function Tree.render(root)
   render_node(root)
   table.insert(lines, "")
 
-  return lines
+  return lines, highlights
+end
+
+--- Apply highlights produced by Tree.render to the tree buffer
+--- @param buf number
+--- @param highlights table[]
+function Tree.apply_highlights(buf, highlights)
+  vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
+  for _, hl in ipairs(highlights or {}) do
+    pcall(vim.api.nvim_buf_set_extmark, buf, NS, hl.line, hl.col_start, {
+      end_col = hl.col_end,
+      hl_group = hl.group,
+    })
+  end
 end
 
 --- Get the tree node at a specific buffer line number
@@ -175,6 +246,153 @@ end
 --- @return TreeNode|nil Node at the line, or nil if no node exists
 function Tree.get_node_at_line(line_num)
   return state.line_to_node[line_num]
+end
+
+--- Get the buffer line of a node from the last render
+--- @param node TreeNode
+--- @return number|nil line 1-indexed line number
+function Tree.get_line_of_node(node)
+  for line, n in pairs(state.line_to_node) do
+    if n == node then
+      return line
+    end
+  end
+  return nil
+end
+
+--- Fully qualified, escaped name for a database/table/column node
+--- @param node TreeNode
+--- @return string|nil
+function Tree.qualified_name(node)
+  local datasource = node.metadata.datasource
+  local adapter = datasource and datasource.adapter
+  local function esc(name)
+    if adapter and adapter.escape_identifier then
+      return adapter:escape_identifier(name)
+    end
+    return name
+  end
+
+  if node.type == "database" then
+    return esc(node.metadata.database_name)
+  elseif node.type == "table" then
+    return esc(node.metadata.database_name) .. "." .. esc(node.metadata.table_name)
+  elseif node.type == "column" then
+    return esc(node.metadata.table_name) .. "." .. esc(node.name)
+  end
+  return nil
+end
+
+--- Reload a node's children from the database (drops the cached subtree)
+--- @param node TreeNode
+--- @param callback function|nil Called after the reload completes
+function Tree.reload_node(node, callback)
+  if node.type == "title" then
+    Tree.reset()
+    if callback then
+      callback()
+    end
+    return
+  end
+  if node.type == "column" or node.type == "constraint" or node.type == "index" then
+    return
+  end
+  node.children = nil
+  node.expanded = false
+  Tree.toggle_node(node, callback)
+end
+
+--- Expand a datasource node (loading it if needed) and the database its DSN
+--- points at, so the tree opens on what the editor is connected to.
+--- @param datasource_name string
+--- @param callback function|nil Called after each expansion step
+function Tree.expand_datasource(datasource_name, callback)
+  local root = state.root
+  if not root or not root.children then
+    return
+  end
+  for _, ds_node in ipairs(root.children) do
+    if ds_node.type == "datasource" and ds_node.name == datasource_name then
+      local function expand_database()
+        if callback then
+          callback()
+        end
+        local datasource = ds_node.metadata.datasource
+        local db_name = datasource and datasource.adapter and datasource.adapter.config.database
+        if not db_name or not ds_node.children then
+          return
+        end
+        for _, db_node in ipairs(ds_node.children) do
+          if db_node.name == db_name and not db_node.expanded then
+            Tree.toggle_node(db_node, callback)
+            return
+          end
+        end
+      end
+      if ds_node.expanded then
+        expand_database()
+      else
+        Tree.toggle_node(ds_node, expand_database)
+      end
+      return
+    end
+  end
+end
+
+--- Collect all loaded table nodes (depth-first)
+--- @return TreeNode[]
+local function loaded_tables()
+  local tables = {}
+  local function walk(node)
+    if node.type == "table" then
+      table.insert(tables, node)
+    end
+    for _, child in ipairs(node.children or {}) do
+      walk(child)
+    end
+  end
+  if state.root then
+    walk(state.root)
+  end
+  return tables
+end
+
+--- Pick a loaded table with vim.ui.select, expand its ancestors and hand it to the callback
+--- @param callback fun(node: TreeNode)
+function Tree.filter(callback)
+  local tables = loaded_tables()
+  if #tables == 0 then
+    vim.notify("abcql: expand a database first to filter its tables", vim.log.levels.INFO)
+    return
+  end
+
+  vim.ui.select(tables, {
+    prompt = "Jump to table:",
+    format_item = function(node)
+      return node.metadata.datasource_name .. " / " .. node.metadata.database_name .. " / " .. node.name
+    end,
+  }, function(node)
+    if not node then
+      return
+    end
+    -- Make sure the node's ancestors are expanded so it can be rendered
+    local function expand_path(current)
+      if current == node then
+        return true
+      end
+      for _, child in ipairs(current.children or {}) do
+        if expand_path(child) then
+          current.expanded = true
+          return true
+        end
+      end
+      return false
+    end
+    if state.root then
+      expand_path(state.root)
+    end
+    callback(node)
+  end)
 end
 
 --- Toggle a node's expanded state or lazy-load its children
@@ -508,8 +726,6 @@ function Tree.browse_table_data(node, callback)
   local escaped_table = datasource.adapter:escape_identifier(table_name)
   local query = string.format("SELECT * FROM %s.%s LIMIT 1000", escaped_db, escaped_table)
 
-  vim.notify("Browsing table: " .. table_name, vim.log.levels.INFO)
-
   local Query = require("abcql.db.query")
   local History = require("abcql.history")
 
@@ -517,9 +733,10 @@ function Tree.browse_table_data(node, callback)
     -- Save to history (both success and error cases)
     History.save(query, datasource.name, database_name, results, err)
 
+    local display_opts = { query = query, datasource = datasource }
     if err then
       if state.display_fn then
-        state.display_fn(err, "Table: " .. table_name)
+        state.display_fn(err, nil, display_opts)
       end
       if callback then
         callback(false)
@@ -528,7 +745,7 @@ function Tree.browse_table_data(node, callback)
     end
 
     if state.display_fn then
-      state.display_fn(results, "Table: " .. table_name)
+      state.display_fn(results, nil, display_opts)
     end
 
     if callback then

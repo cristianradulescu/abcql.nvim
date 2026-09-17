@@ -59,27 +59,34 @@ local function process_timeout(request)
 end
 
 --- Invoke abcql-backend asynchronously with a JSON request.
+--- Returns the vim.system handle so callers can cancel the query with
+--- `handle:kill()`; a killed process reports the error "Query cancelled".
 --- @param request table Request matching the Go backend's protocol (see backend/protocol.go)
 --- @param callback fun(response: table|nil, err: string|nil)
+--- @return vim.SystemObj|nil handle
 function M.invoke(request, callback)
   local path = M.get_path()
   if not path or vim.fn.executable(path) ~= 1 then
     callback(nil, missing_binary_error(path))
-    return
+    return nil
   end
 
   local ok, body = pcall(vim.json.encode, request)
   if not ok then
     callback(nil, "Failed to encode backend request: " .. tostring(body))
-    return
+    return nil
   end
 
-  vim.system({ path, "exec" }, {
+  return vim.system({ path, "exec" }, {
     stdin = body,
     text = true,
     timeout = process_timeout(request),
   }, function(result)
     vim.schedule(function()
+      if result.signal and result.signal ~= 0 and (result.stdout == nil or result.stdout == "") then
+        callback(nil, "Query cancelled")
+        return
+      end
       callback(parse_result(result))
     end)
   end)
