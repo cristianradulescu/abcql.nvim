@@ -142,7 +142,11 @@ CREATE/ALTER/DROP/RENAME. All context detection is statement-scoped: `Server:sta
 `abcql.db.statements` to hand `abcql.lsp.parser` the current statement (text before the cursor for
 the clause, the whole statement for alias/table resolution). `Parser.last_clause` picks the
 completion context from the closest clause keyword before the cursor. Keywords are always offered,
-ranked after schema items via `sortText` groups (`Completion.RANK`). Diagnostics (unknown tables,
+ranked after schema items via `sortText` groups (`Completion.RANK`; `JOIN` ranks first). Join
+suggestions come from `Server:join_conditions` (foreign keys grouped by constraint name in either
+direction, then same-name/same-type columns) applied to `Parser.last_joined_table` after `ON`, or
+to every FK-linked table after `JOIN` (`Server:join_table_suggestions`, alias generated from the
+table's initials and de-duplicated against the statement). Diagnostics (unknown tables,
 skipping CTE names and CREATE statements) are pushed with `publishDiagnostics` from a debounced
 timer on `didOpen`/`didChange`.
 

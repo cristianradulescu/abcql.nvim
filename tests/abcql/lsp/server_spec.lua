@@ -35,17 +35,32 @@ describe("LSP Server", function()
     cache = Cache.new()
     cache.caches["dev"] = {
       databases = { "shop" },
-      tables = { shop = { "Employees", "departments", "dept_emp" } },
+      tables = { shop = { "Employees", "departments", "dept_emp", "audit" } },
       columns = {
         ["shop.Employees"] = { { name = "emp_no", type = "int" }, { name = "first_name", type = "varchar(14)" } },
         ["shop.departments"] = { { name = "dept_no", type = "char(4)" }, { name = "dept_name", type = "varchar(40)" } },
         ["shop.dept_emp"] = { { name = "emp_no", type = "int" }, { name = "dept_no", type = "char(4)" } },
+        ["shop.audit"] = {
+          { name = "emp_no", type = "int" },
+          { name = "dept_no", type = "char(4)" },
+          { name = "first_name", type = "varchar(14)" },
+        },
       },
       constraints = {
         ["shop.Employees"] = { primary_key = { "emp_no" }, foreign_keys = {} },
         ["shop.dept_emp"] = {
           primary_key = { "emp_no", "dept_no" },
-          foreign_keys = { { column = "dept_no", ref_table = "departments", ref_column = "dept_no" } },
+          foreign_keys = {
+            { column = "dept_no", ref_table = "departments", ref_column = "dept_no", constraint = "fk_dept" },
+            { column = "emp_no", ref_table = "Employees", ref_column = "emp_no", constraint = "fk_emp" },
+          },
+        },
+        ["shop.audit"] = {
+          primary_key = {},
+          foreign_keys = {
+            { column = "emp_no", ref_table = "dept_emp", ref_column = "emp_no", constraint = "fk_pair" },
+            { column = "dept_no", ref_table = "dept_emp", ref_column = "dept_no", constraint = "fk_pair" },
+          },
         },
       },
       metadata = { loaded_at = 0 },
@@ -126,7 +141,7 @@ describe("LSP Server", function()
       local items = server:handle_completion(params_at(0, 12))
       local col = has(items, "dept_name")
       assert.is_not_nil(col)
-      assert.are.equal("1", col.sortText:sub(1, 1))
+      assert.are.equal(tostring(require("abcql.lsp.completion").RANK.SECONDARY), col.sortText:sub(1, 1))
     end)
 
     it("offers tables of a qualified database case-insensitively", function()
@@ -148,6 +163,65 @@ describe("LSP Server", function()
       cache:clear("dev")
       set_lines({ "SELECT " })
       assert.are.same({}, server:handle_completion(params_at(0, 7)))
+    end)
+  end)
+
+  describe("join suggestions", function()
+    it("offers foreign-key conditions after ON, using aliases", function()
+      set_lines({ "SELECT * FROM Employees e JOIN dept_emp de ON " })
+      local items = server:handle_completion(params_at(0, 46))
+      local cond = has(items, "de.emp_no = e.emp_no")
+      assert.is_not_nil(cond)
+      assert.are.equal(15, cond.kind)
+      assert.are.equal("FK dept_emp → Employees", cond.detail)
+      -- ranked before plain columns
+      assert.is_true(cond.sortText < has(items, "emp_no").sortText)
+    end)
+
+    it("uses table names without aliases and works in both FK directions", function()
+      set_lines({ "SELECT * FROM dept_emp JOIN departments ON " })
+      local items = server:handle_completion(params_at(0, 43))
+      assert.is_not_nil(has(items, "departments.dept_no = dept_emp.dept_no"))
+    end)
+
+    it("keeps composite keys together and adds same-name fallbacks ranked lower", function()
+      set_lines({ "SELECT * FROM dept_emp d JOIN audit a ON " })
+      local items = server:handle_completion(params_at(0, 41))
+      local fk = has(items, "a.emp_no = d.emp_no AND a.dept_no = d.dept_no")
+      assert.is_not_nil(fk)
+      assert.is_nil(has(items, "a.emp_no = d.emp_no"))
+      set_lines({ "SELECT * FROM Employees e JOIN audit a ON " })
+      items = server:handle_completion(params_at(0, 42))
+      local by_name = has(items, "a.first_name = e.first_name")
+      assert.is_not_nil(by_name)
+      assert.is_true(by_name.sortText > has(items, "a.emp_no = e.emp_no").sortText)
+    end)
+
+    it("filters conditions by any identifier typed after ON", function()
+      set_lines({ "SELECT * FROM Employees e JOIN dept_emp de ON emp" })
+      local items = server:handle_completion(params_at(0, 49))
+      assert.is_not_nil(has(items, "de.emp_no = e.emp_no"))
+    end)
+
+    it("offers JOIN snippets for tables linked by a foreign key", function()
+      set_lines({ "SELECT * FROM Employees e JOIN " })
+      local items = server:handle_completion(params_at(0, 31))
+      local snippet = has(items, "dept_emp de ON de.emp_no = e.emp_no")
+      assert.is_not_nil(snippet)
+      assert.are.equal("dept_emp ${1:de} ON $1.emp_no = e.emp_no", snippet.insertText)
+      assert.are.equal(2, snippet.insertTextFormat)
+      assert.is_nil(has(items, "departments d ON d.dept_no = e.dept_no"))
+      -- plain table items are still there, ranked after the snippet
+      assert.is_true(snippet.sortText < has(items, "departments").sortText)
+    end)
+
+    it("picks an alias that is not already used", function()
+      set_lines({ "SELECT * FROM departments d JOIN " })
+      local items = server:handle_completion(params_at(0, 33))
+      assert.is_not_nil(has(items, "dept_emp de ON de.dept_no = d.dept_no"))
+      set_lines({ "SELECT * FROM departments de JOIN " })
+      items = server:handle_completion(params_at(0, 34))
+      assert.is_not_nil(has(items, "dept_emp de2 ON de2.dept_no = de.dept_no"))
     end)
   end)
 

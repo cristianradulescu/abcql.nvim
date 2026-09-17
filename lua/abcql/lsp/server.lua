@@ -131,6 +131,202 @@ function Server:known_tables(text)
   return found
 end
 
+--- Tables of a statement with the name used to reference them (alias or table name)
+---@param text string Statement text
+---@return { database: string, name: string, ref: string }[]
+function Server:statement_tables(text)
+  local aliases = {}
+  for _, m in ipairs(Parser.extract_table_aliases(text)) do
+    aliases[m.table_name] = aliases[m.table_name] or m.alias
+  end
+  local result = {}
+  for _, tbl in ipairs(self:known_tables(text)) do
+    table.insert(result, { database = tbl.database, name = tbl.name, ref = aliases[tbl.name:lower()] or tbl.name })
+  end
+  return result
+end
+
+--- Foreign keys of a table grouped by constraint (composite keys stay together)
+---@param database string
+---@param table_name string
+---@return { ref_table: string, columns: string[], ref_columns: string[] }[]
+function Server:foreign_key_groups(database, table_name)
+  local constraints = self.cache:get_constraints(self.datasource_name, database, table_name)
+  local groups, order = {}, {}
+  for i, fk in ipairs(constraints and constraints.foreign_keys or {}) do
+    local key = fk.constraint or (fk.ref_table .. "#" .. i)
+    if not groups[key] then
+      groups[key] = { ref_table = fk.ref_table, columns = {}, ref_columns = {} }
+      table.insert(order, key)
+    end
+    table.insert(groups[key].columns, fk.column)
+    table.insert(groups[key].ref_columns, fk.ref_column)
+  end
+  local list = {}
+  for _, key in ipairs(order) do
+    table.insert(list, groups[key])
+  end
+  return list
+end
+
+--- Render `a.x = b.x AND a.y = b.y`
+---@param left_ref string
+---@param left_cols string[]
+---@param right_ref string
+---@param right_cols string[]
+---@return string
+local function render_condition(left_ref, left_cols, right_ref, right_cols)
+  local parts = {}
+  for i = 1, #left_cols do
+    table.insert(parts, string.format("%s.%s = %s.%s", left_ref, left_cols[i], right_ref, right_cols[i]))
+  end
+  return table.concat(parts, " AND ")
+end
+
+--- Join conditions between two tables: foreign keys in either direction,
+--- then columns sharing name and type.
+---@param a { database: string, name: string, ref: string }
+---@param b { database: string, name: string, ref: string }
+---@return { text: string, via: "fk"|"name", detail: string }[]
+function Server:join_conditions(a, b)
+  local conditions = {}
+  local used = {}
+
+  for _, fk in ipairs(self:foreign_key_groups(a.database, a.name)) do
+    if fk.ref_table:lower() == b.name:lower() then
+      table.insert(conditions, {
+        text = render_condition(a.ref, fk.columns, b.ref, fk.ref_columns),
+        via = "fk",
+        detail = string.format("FK %s → %s", a.name, b.name),
+      })
+      for _, c in ipairs(fk.columns) do
+        used[c:lower()] = true
+      end
+    end
+  end
+  for _, fk in ipairs(self:foreign_key_groups(b.database, b.name)) do
+    if fk.ref_table:lower() == a.name:lower() then
+      table.insert(conditions, {
+        text = render_condition(a.ref, fk.ref_columns, b.ref, fk.columns),
+        via = "fk",
+        detail = string.format("FK %s → %s", b.name, a.name),
+      })
+      for _, c in ipairs(fk.ref_columns) do
+        used[c:lower()] = true
+      end
+    end
+  end
+
+  local b_types = {}
+  for _, col in ipairs(self.cache:get_columns(self.datasource_name, b.database, b.name) or {}) do
+    b_types[col.name:lower()] = col
+  end
+  for _, col in ipairs(self.cache:get_columns(self.datasource_name, a.database, a.name) or {}) do
+    local other = b_types[col.name:lower()]
+    if other and other.type == col.type and not used[col.name:lower()] then
+      table.insert(conditions, {
+        text = render_condition(a.ref, { col.name }, b.ref, { other.name }),
+        via = "name",
+        detail = string.format("same column in %s and %s", a.name, b.name),
+      })
+    end
+  end
+
+  return conditions
+end
+
+--- Join conditions to offer after `ON`: between the last joined table and
+--- every other table of the statement.
+---@param statement_text string
+---@param before string Statement text before the cursor
+---@return { text: string, via: "fk"|"name", detail: string }[]
+function Server:join_conditions_at(statement_text, before)
+  local joined = Parser.last_joined_table(before)
+  if not joined then
+    return {}
+  end
+  local db, real = self.cache:find_table(self.datasource_name, joined.table, joined.database)
+  if not db then
+    return {}
+  end
+  local joined_ref = { database = db, name = real, ref = joined.alias or real }
+
+  local conditions = {}
+  for _, other in ipairs(self:statement_tables(statement_text)) do
+    if other.name:lower() ~= real:lower() then
+      vim.list_extend(conditions, self:join_conditions(joined_ref, other))
+    end
+  end
+  return conditions
+end
+
+--- A short alias for a table that is not used yet in the statement
+---@param table_name string
+---@param taken table<string, boolean> Lowercased names already in use
+---@return string
+local function suggest_alias(table_name, taken)
+  local initials = {}
+  for part in table_name:gmatch("[%a%d]+") do
+    table.insert(initials, part:sub(1, 1):lower())
+  end
+  local base = table.concat(initials)
+  if base == "" then
+    base = "t"
+  end
+  local alias = base
+  local n = 1
+  while taken[alias] do
+    n = n + 1
+    alias = base .. n
+  end
+  return alias
+end
+
+--- `JOIN table alias ON condition` suggestions for tables linked by a foreign
+--- key to any table already in the statement.
+---@param statement_text string
+---@return { table: string, alias: string, condition: string, detail: string }[]
+function Server:join_table_suggestions(statement_text)
+  local present = self:statement_tables(statement_text)
+  if #present == 0 then
+    return {}
+  end
+  local taken = {}
+  for _, t in ipairs(present) do
+    taken[t.ref:lower()] = true
+    taken[t.name:lower()] = true
+  end
+
+  local suggestions = {}
+  local seen = {}
+  for db, tables in pairs(self.cache:get_all_tables(self.datasource_name) or {}) do
+    for _, candidate in ipairs(tables) do
+      if not taken[candidate:lower()] then
+        local alias = suggest_alias(candidate, taken)
+        local cand = { database = db, name = candidate, ref = alias }
+        for _, existing in ipairs(present) do
+          for _, cond in ipairs(self:join_conditions(cand, existing)) do
+            local key = candidate:lower() .. "|" .. cond.text
+            if cond.via == "fk" and not seen[key] then
+              seen[key] = true
+              table.insert(suggestions, {
+                table = candidate,
+                alias = alias,
+                condition = cond.text,
+                detail = cond.detail,
+              })
+            end
+          end
+        end
+      end
+    end
+  end
+  table.sort(suggestions, function(x, y)
+    return x.table < y.table
+  end)
+  return suggestions
+end
+
 --- Handle textDocument/completion request
 ---@param params table LSP completion params
 ---@return table[] Array of completion items
@@ -163,6 +359,8 @@ function Server:handle_completion(params)
       vim.list_extend(items, Completion.create_all_table_items(all_tables, partial))
       if context.clause == "INSERT INTO" or context.clause == "INTO" then
         vim.list_extend(items, Completion.create_insert_snippet_items(cache, ds, all_tables, partial))
+      elseif context.clause and context.clause:find("JOIN", 1, true) then
+        vim.list_extend(items, Completion.create_join_table_items(self:join_table_suggestions(ctx.text), partial))
       end
     end
   elseif context.type == "COLUMN" then
@@ -176,6 +374,12 @@ function Server:handle_completion(params)
         )
       end
     else
+      if context.clause == "ON" then
+        vim.list_extend(
+          items,
+          Completion.create_join_condition_items(self:join_conditions_at(ctx.text, ctx.before), partial)
+        )
+      end
       local table_names = Parser.extract_table_names(ctx.text)
       local from_statement =
         Completion.create_columns_from_tables(cache, ds, table_names, nil, partial, Completion.RANK.PRIMARY)

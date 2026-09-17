@@ -432,6 +432,38 @@ function Parser.resolve_alias(alias, query_text)
   return nil, nil
 end
 
+--- The table introduced by the last JOIN before the end of `text`, with its alias
+---@param text string Text before the cursor
+---@return { table: string, database: string|nil, alias: string|nil }|nil
+function Parser.last_joined_table(text)
+  local upper = text:upper()
+  local last = nil
+  local init = 1
+  while true do
+    local s, e = upper:find("%f[%w_]JOIN%f[^%w_]%s+", init)
+    if not s then
+      break
+    end
+    last = e + 1
+    init = e + 1
+  end
+  if not last then
+    return nil
+  end
+  local ref = text:match("^([%w_%.`]+)", last)
+  if not ref then
+    return nil
+  end
+  local rest = text:sub(last + #ref)
+  local alias = rest:match("^%s+[Aa][Ss]%s+`?([%w_]+)`?") or rest:match("^%s+`?([%w_]+)`?")
+  if alias and Parser.is_sql_keyword(alias:upper()) then
+    alias = nil
+  end
+  local clean = ref:gsub("`", "")
+  local database, table_name = clean:match("^([%w_]+)%.([%w_]+)$")
+  return { table = table_name or clean, database = database, alias = alias }
+end
+
 --- Identifier under a column of a line: `name` or `qualifier.name`
 ---@param line string
 ---@param col number 0-based byte column

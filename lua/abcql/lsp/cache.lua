@@ -19,7 +19,7 @@ Cache.__index = Cache
 
 ---@class TableConstraints
 ---@field primary_key string[]
----@field foreign_keys { column: string, ref_table: string, ref_column: string }[]
+---@field foreign_keys { column: string, ref_table: string, ref_column: string, constraint: string? }[] `constraint` groups the columns of a composite key
 
 --- Create a new cache instance
 ---@return abcql.lsp.Cache

@@ -401,6 +401,7 @@ and files with many statements all behave.
 |---|---|
 | Completion | Databases after `USE`; tables after `FROM`/`JOIN`/`INTO`/`UPDATE` (comma lists too); columns of the statement's tables after `SELECT`/`WHERE`/`ON`/`SET`/`ORDER BY`..., `alias.` and `table.` qualified; keywords always, ranked last |
 | INSERT snippets | After `INSERT INTO`, each table also offers a `(columns) VALUES (…)` snippet with one tab stop per column |
+| Join suggestions | After `ON`, conditions between the joined table and the others in the statement: foreign keys first (`de.emp_no = e.emp_no`, composite keys joined with `AND`), then columns sharing name and type. After `JOIN`, tables linked by a foreign key to the statement's tables come first as `dept_emp de ON de.emp_no = e.emp_no` snippets with an editable alias |
 | Hover (`K`) | A table shows its columns, types, primary key and foreign keys; a column shows its type, table and key info |
 | Document symbols (`gO`, symbol pickers) | One symbol per statement, named by its first keyword and tables |
 | Workspace symbols (`vim.lsp.buf.workspace_symbol`) | Fuzzy lookup of tables and columns of the datasource |

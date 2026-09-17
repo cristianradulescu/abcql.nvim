@@ -91,9 +91,9 @@ local CompletionItemKind = {
 }
 Completion.Kind = CompletionItemKind
 
---- Sort groups: lower sorts first. Items from the statement's own tables
---- come before the schema-wide fallback, keywords last.
-Completion.RANK = { PRIMARY = 0, SECONDARY = 1, KEYWORD = 2 }
+--- Sort groups: lower sorts first. Join suggestions come first, then items
+--- from the statement's own tables, the schema-wide fallback, keywords last.
+Completion.RANK = { JOIN = 0, PRIMARY = 1, SECONDARY = 2, KEYWORD = 3 }
 
 --- Whether `name` matches the partial, and with which priority
 --- @param name string
@@ -284,6 +284,56 @@ function Completion.create_insert_snippet_items(cache, datasource_name, all_tabl
           filterText = table_name,
         })
       end
+    end
+  end
+  return items
+end
+
+--- Snippet items for join conditions (`a.col = b.col [AND ...]`)
+---@param conditions { text: string, via: "fk"|"name", detail: string }[]
+---@param partial string
+---@return table[]
+function Completion.create_join_condition_items(conditions, partial)
+  local items = {}
+  local partial_lower = partial:lower()
+  for i, cond in ipairs(conditions) do
+    -- Match on any identifier taking part in the condition, not only its start
+    if partial_lower == "" or cond.text:lower():find(partial_lower, 1, true) then
+      table.insert(items, {
+        label = cond.text,
+        kind = CompletionItemKind.Snippet,
+        detail = cond.detail,
+        documentation = cond.via == "fk" and "Suggested from a foreign key" or "Suggested from matching column names",
+        insertText = cond.text,
+        sortText = string.format("%d%d_%02d", Completion.RANK.JOIN, cond.via == "fk" and 0 or 1, i),
+        filterText = cond.text:gsub("[=%.]", " "),
+      })
+    end
+  end
+  return items
+end
+
+--- Snippet items for `JOIN table alias ON condition` driven by foreign keys
+---@param joins { table: string, alias: string, condition: string, detail: string }[]
+---@param partial string
+---@return table[]
+function Completion.create_join_table_items(joins, partial)
+  local items = {}
+  local partial_lower = partial:lower()
+  for i, join in ipairs(joins) do
+    if match_priority(join.table, partial_lower) then
+      -- `$1` is repeated so renaming the alias updates the condition too
+      local condition = join.condition:gsub(vim.pesc(join.alias .. "."), "$1.")
+      table.insert(items, {
+        label = string.format("%s %s ON %s", join.table, join.alias, join.condition),
+        kind = CompletionItemKind.Snippet,
+        detail = join.detail,
+        documentation = "Join suggested from a foreign key",
+        insertText = string.format("%s ${1:%s} ON %s", join.table, join.alias, condition),
+        insertTextFormat = 2,
+        sortText = string.format("%d0_%02d", Completion.RANK.JOIN, i),
+        filterText = join.table,
+      })
     end
   end
   return items
