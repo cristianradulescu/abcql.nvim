@@ -276,6 +276,7 @@ function Query.run(sql, datasource, opts)
         UI.display(err, nil, display_opts)
       else
         UI.display(results, nil, display_opts)
+        Query.after_schema_change(sql, datasource)
       end
       finish(results, err)
     end)
@@ -299,6 +300,34 @@ function Query.run(sql, datasource, opts)
     end)
   else
     execute()
+  end
+end
+
+--- Statement keywords that change the schema and invalidate the cached one
+local SCHEMA_KEYWORDS = { CREATE = true, ALTER = true, DROP = true, RENAME = true }
+
+--- After a successful DDL statement, refresh the datasource's schema cache
+--- (completion, hover, diagnostics) and the tree.
+--- @param sql string
+--- @param datasource Datasource
+function Query.after_schema_change(sql, datasource)
+  local keyword = Statements.first_keyword(sql)
+  if not keyword or not SCHEMA_KEYWORDS[keyword] then
+    return
+  end
+
+  local LSP = require("abcql.lsp")
+  if LSP.has_schema(datasource.name) then
+    LSP.refresh_schema(datasource.name, datasource.adapter, function() end)
+  end
+
+  local ok, Tree = pcall(require, "abcql.ui.tree")
+  if ok then
+    Tree.reset()
+  end
+  local ok_ui, UI = pcall(require, "abcql.ui")
+  if ok_ui and UI.refresh_tree then
+    UI.refresh_tree()
   end
 end
 

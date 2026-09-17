@@ -10,9 +10,6 @@ vim.opt.rtp:append(plenary_dir)
 
 vim.cmd("runtime! plugin/plenary.vim")
 
-vim.log.levels = {
-  ERROR = 1,
-  WARN = 2,
-  INFO = 3,
-  DEBUG = 4,
-}
+-- Specs create modified unnamed buffers; with several test processes running
+-- in parallel their swap files would collide (E303).
+vim.o.swapfile = false

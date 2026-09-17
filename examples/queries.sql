@@ -24,6 +24,5 @@ JOIN dept_emp de ON de.emp_no = e.emp_no
 JOIN departments d ON d.dept_no = de.dept_no
 LIMIT 10;
 
-select * from salaries;
-
-select * from dept_manager;
+SELECT e.emp_no, e.last_name FROM employees e
+JOIN dept_emp de on de.emp_no = e.emp_no;

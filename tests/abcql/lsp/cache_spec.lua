@@ -186,4 +186,84 @@ describe("Cache", function()
       assert.is_true(callback_called)
     end)
   end)
+
+  describe("batched loading", function()
+    it("uses get_all_columns and get_all_constraints when the adapter has them", function()
+      local per_table_calls = 0
+      local adapter = {
+        get_databases = function(_, cb)
+          cb({ "db" }, nil)
+        end,
+        get_tables = function(_, _, cb)
+          cb({ "a", "b" }, nil)
+        end,
+        get_columns = function()
+          per_table_calls = per_table_calls + 1
+        end,
+        get_all_columns = function(_, db, cb)
+          assert.are.equal("db", db)
+          cb({ a = { { name = "id", type = "int" } } }, nil)
+        end,
+        get_all_constraints = function(_, _, cb)
+          cb({ a = { primary_key = { "id" }, foreign_keys = {} } }, nil)
+        end,
+      }
+      local done = false
+      cache:load_schema("ds", adapter, function(err)
+        assert.is_nil(err)
+        done = true
+      end)
+      assert.is_true(done)
+      assert.are.equal(0, per_table_calls)
+      assert.are.same({ { name = "id", type = "int" } }, cache:get_columns("ds", "db", "a"))
+      assert.are.same({}, cache:get_columns("ds", "db", "b"))
+      assert.are.same({ "id" }, cache:get_constraints("ds", "db", "a").primary_key)
+    end)
+
+    it("tolerates constraint errors", function()
+      local adapter = {
+        get_databases = function(_, cb)
+          cb({ "db" }, nil)
+        end,
+        get_tables = function(_, _, cb)
+          cb({ "a" }, nil)
+        end,
+        get_all_columns = function(_, _, cb)
+          cb({ a = {} }, nil)
+        end,
+        get_all_constraints = function(_, _, cb)
+          cb(nil, "denied")
+        end,
+      }
+      local err_seen = "unset"
+      cache:load_schema("ds", adapter, function(err)
+        err_seen = err
+      end)
+      assert.is_nil(err_seen)
+      assert.is_nil(cache:get_constraints("ds", "db", "a"))
+    end)
+  end)
+
+  describe("find_table / case-insensitive lookups", function()
+    before_each(function()
+      cache.caches["ds"] = {
+        databases = { "Shop" },
+        tables = { Shop = { "Employees" } },
+        columns = { ["Shop.Employees"] = { { name = "id", type = "int" } } },
+        constraints = {},
+        metadata = { loaded_at = 0 },
+      }
+    end)
+
+    it("finds tables regardless of case", function()
+      local db, tbl = cache:find_table("ds", "EMPLOYEES")
+      assert.are.equal("Shop", db)
+      assert.are.equal("Employees", tbl)
+      assert.is_nil((cache:find_table("ds", "employees", "other")))
+    end)
+
+    it("resolves columns with a differently cased name", function()
+      assert.are.same({ { name = "id", type = "int" } }, cache:get_columns("ds", "shop", "employees"))
+    end)
+  end)
 end)

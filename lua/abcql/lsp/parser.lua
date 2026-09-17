@@ -9,126 +9,146 @@ local Parser = {}
 ---@field table string|nil Table name if qualified
 ---@field partial string Partial text being completed
 ---@field resolved_from_alias string|nil Original alias that was resolved to table name
+---@field clause string|nil Uppercased clause keyword the cursor is in (FROM, WHERE, INTO, ...)
 
 ---@class AliasMapping
 ---@field table_name string Actual table name
 ---@field alias string Alias used in query
 ---@field database string|nil Optional database qualifier
 
---- SQL keywords that should trigger table completion
-local TABLE_KEYWORDS = {
-  "FROM",
-  "JOIN",
-  "INTO",
-  "UPDATE",
-  "LEFT JOIN",
-  "RIGHT JOIN",
-  "INNER JOIN",
-  "OUTER JOIN",
-  "FULL JOIN",
-  "CROSS JOIN",
-  "DESCRIBE",
-  "SHOW CREATE TABLE",
+--- Clause keywords and the completion context they open. The cursor's
+--- context is decided by the closest clause keyword before it, so comma
+--- lists (`FROM a, b|`, `SELECT x, y|`) and multi-line clauses work.
+--- Longer keywords must come before their suffixes (LEFT JOIN before JOIN).
+local CLAUSES = {
+  { keyword = "SHOW CREATE TABLE", context = "TABLE" },
+  { keyword = "INSERT INTO", context = "TABLE" },
+  { keyword = "LEFT OUTER JOIN", context = "TABLE" },
+  { keyword = "RIGHT OUTER JOIN", context = "TABLE" },
+  { keyword = "FULL OUTER JOIN", context = "TABLE" },
+  { keyword = "LEFT JOIN", context = "TABLE" },
+  { keyword = "RIGHT JOIN", context = "TABLE" },
+  { keyword = "INNER JOIN", context = "TABLE" },
+  { keyword = "OUTER JOIN", context = "TABLE" },
+  { keyword = "CROSS JOIN", context = "TABLE" },
+  { keyword = "FULL JOIN", context = "TABLE" },
+  { keyword = "JOIN", context = "TABLE" },
+  { keyword = "FROM", context = "TABLE" },
+  { keyword = "INTO", context = "TABLE" },
+  { keyword = "UPDATE", context = "TABLE" },
+  { keyword = "DESCRIBE", context = "TABLE" },
+  { keyword = "TRUNCATE TABLE", context = "TABLE" },
+  { keyword = "TRUNCATE", context = "TABLE" },
+  { keyword = "DROP TABLE", context = "TABLE" },
+  { keyword = "ALTER TABLE", context = "TABLE" },
+  { keyword = "USE", context = "DATABASE" },
+  { keyword = "ORDER BY", context = "COLUMN" },
+  { keyword = "GROUP BY", context = "COLUMN" },
+  { keyword = "SELECT", context = "COLUMN" },
+  { keyword = "WHERE", context = "COLUMN" },
+  { keyword = "HAVING", context = "COLUMN" },
+  { keyword = "SET", context = "COLUMN" },
+  { keyword = "ON", context = "COLUMN" },
+  { keyword = "AND", context = "COLUMN" },
+  { keyword = "OR", context = "COLUMN" },
+  { keyword = "VALUES", context = "KEYWORD" },
+  { keyword = "LIMIT", context = "KEYWORD" },
+  { keyword = "OFFSET", context = "KEYWORD" },
 }
 
---- SQL keywords that should trigger column completion
-local COLUMN_KEYWORDS = {
-  "SELECT",
-  "WHERE",
-  "ORDER BY",
-  "GROUP BY",
-  "HAVING",
-  "SET",
-  "ON",
-  "AND",
-  "OR",
-}
+--- Escape a keyword for use in a Lua pattern, turning spaces into `%s+`
+--- @param keyword string
+--- @return string
+local function keyword_pattern(keyword)
+  return (keyword:gsub("%s+", "%%s+"))
+end
+
+--- Find the closest clause keyword before the end of `text`
+--- @param text string Text before the cursor (may span lines)
+--- @return { keyword: string, context: ContextType, stop: number }|nil
+function Parser.last_clause(text)
+  local upper = text:upper()
+  local best = nil
+  for _, clause in ipairs(CLAUSES) do
+    local pattern = "%f[%w_]" .. keyword_pattern(clause.keyword) .. "%f[^%w_]"
+    local init = 1
+    while true do
+      local s, e = upper:find(pattern, init)
+      if not s then
+        break
+      end
+      if not best or e > best.stop then
+        best = { keyword = clause.keyword, context = clause.context, start = s, stop = e }
+      end
+      init = e + 1
+    end
+  end
+  return best
+end
 
 --- Parse SQL context at cursor position
----@param line string The current line text
----@param cursor_col number Cursor column position (1-based)
----@param full_query string|nil Optional full query text for alias resolution
+---@param text string The text containing the cursor (a line or a whole statement)
+---@param cursor_col number Cursor column position within `text` (1-based)
+---@param full_query string|nil Optional full statement text for alias resolution
 ---@return ParseContext Context information for completion
-function Parser.parse_context(line, cursor_col, full_query)
-  local before_cursor = line:sub(1, cursor_col - 1)
+function Parser.parse_context(text, cursor_col, full_query)
+  local before_cursor = text:sub(1, cursor_col - 1)
   local partial = Parser.extract_partial_word(before_cursor)
+  local clause = Parser.last_clause(before_cursor)
+  local clause_keyword = clause and clause.keyword or nil
 
-  -- Check for qualified identifier (database.table or table.column)
-  local qualifier, dot_partial = before_cursor:match("([%w_]+)%.([%w_]*)$")
+  -- Qualified identifier (database.table, table.column, alias.column), backticks allowed
+  local qualifier, dot_partial = before_cursor:match("`?([%w_]+)`?%.`?([%w_]*)$")
   if qualifier and dot_partial ~= nil then
-    -- NEW: Try to resolve as alias first (if full query provided)
     if full_query then
       local table_name, database = Parser.resolve_alias(qualifier, full_query)
       if table_name then
-        -- It's an alias! Return COLUMN context with resolved table
         return {
           type = "COLUMN",
           database = database,
           table = table_name,
           partial = dot_partial,
           resolved_from_alias = qualifier,
+          clause = clause_keyword,
         }
       end
     end
 
-    -- Check if this is a database qualifier (db.|)
-    -- We need to determine if qualifier is a database or table name
-    -- For now, we'll check if it appears after FROM/JOIN keywords
-    local before_qualifier = before_cursor:match("^(.*)%s+" .. qualifier .. "%.")
-    if before_qualifier and Parser.is_after_table_keyword(before_qualifier) then
+    if clause and clause.context == "TABLE" then
       return {
         type = "TABLE",
         database = qualifier,
         table = nil,
         partial = dot_partial,
-      }
-    else
-      -- Assume it's a table qualifier (table.|)
-      return {
-        type = "COLUMN",
-        database = nil,
-        table = qualifier,
-        partial = dot_partial,
+        clause = clause_keyword,
       }
     end
-  end
 
-  -- Check for USE statement (database context)
-  if before_cursor:match("%s*USE%s+[%w_]*$") then
-    return {
-      type = "DATABASE",
-      database = nil,
-      table = nil,
-      partial = partial,
-    }
-  end
-
-  -- Check if after table keyword (FROM, JOIN, etc.)
-  if Parser.is_after_table_keyword(before_cursor) then
-    return {
-      type = "TABLE",
-      database = nil,
-      table = nil,
-      partial = partial,
-    }
-  end
-
-  -- Check if after column keyword (SELECT, WHERE, etc.)
-  if Parser.is_after_column_keyword(before_cursor) then
     return {
       type = "COLUMN",
       database = nil,
-      table = nil,
-      partial = partial,
+      table = qualifier,
+      partial = dot_partial,
+      clause = clause_keyword,
     }
   end
 
-  -- Default to keyword completion
+  if clause and clause.context ~= "KEYWORD" then
+    return {
+      type = clause.context,
+      database = nil,
+      table = nil,
+      partial = partial,
+      clause = clause_keyword,
+    }
+  end
+
   return {
     type = "KEYWORD",
     database = nil,
     table = nil,
     partial = partial,
+    clause = clause_keyword,
   }
 end
 
@@ -136,7 +156,7 @@ end
 ---@param text string Text before cursor
 ---@return string Partial word
 function Parser.extract_partial_word(text)
-  local word = text:match("([%w_]*)$")
+  local word = text:match("`?([%w_]*)$")
   return word or ""
 end
 
@@ -144,61 +164,98 @@ end
 ---@param text string Text before cursor
 ---@return boolean True if after table keyword
 function Parser.is_after_table_keyword(text)
-  local upper_text = text:upper()
-  for _, keyword in ipairs(TABLE_KEYWORDS) do
-    -- Match: <keyword> <word> OR <keyword>$ (ends with keyword)
-    if
-      upper_text:match("%s" .. keyword .. "%s+[%w_]*$")
-      or upper_text:match("^" .. keyword .. "%s+[%w_]*$")
-      or upper_text:match("%s" .. keyword .. "$")
-      or upper_text:match("^" .. keyword .. "$")
-    then
-      return true
-    end
-  end
-  return false
+  local clause = Parser.last_clause(text)
+  return clause ~= nil and clause.context == "TABLE"
 end
 
 --- Check if cursor is after a column keyword
 ---@param text string Text before cursor
 ---@return boolean True if after column keyword
 function Parser.is_after_column_keyword(text)
-  local upper_text = text:upper()
-  for _, keyword in ipairs(COLUMN_KEYWORDS) do
-    if upper_text:match("%s" .. keyword .. "%s+[%w_]*$") or upper_text:match("^" .. keyword .. "%s+[%w_]*$") then
-      return true
+  local clause = Parser.last_clause(text)
+  return clause ~= nil and clause.context == "COLUMN"
+end
+
+--- Extract table names referenced in the query (FROM / JOIN / INTO / UPDATE),
+--- in their original case, without database qualifiers or CTE names.
+---@param text string SQL query text
+---@return string[] Array of table names
+function Parser.extract_table_names(text)
+  local tables = {}
+  local seen = {}
+  local ctes = {}
+  for _, name in ipairs(Parser.extract_cte_names(text)) do
+    ctes[name:lower()] = true
+  end
+
+  local function add(ref)
+    local name = ref:match("%.`?([%w_]+)`?$") or ref:match("^`?([%w_]+)`?$")
+    if not name then
+      return
+    end
+    local key = name:lower()
+    if not seen[key] and not ctes[key] then
+      seen[key] = true
+      table.insert(tables, name)
     end
   end
 
-  -- Also check for comma-separated list in SELECT
-  if upper_text:match("SELECT%s+.*,%s*[%w_]*$") then
-    return true
-  end
-
-  return false
-end
-
---- Extract table names referenced in the query
----@param text string SQL query text
----@return string[] Array of table names (without aliases)
-function Parser.extract_table_names(text)
-  local tables = {}
-  local upper_text = text:upper()
-
-  -- Match FROM clause tables
-  for table_name in upper_text:gmatch("FROM%s+([%w_%.]+)") do
-    -- Remove database qualifier if present
-    local name = table_name:match("%.([%w_]+)$") or table_name
-    table.insert(tables, name:lower())
-  end
-
-  -- Match JOIN clause tables
-  for table_name in upper_text:gmatch("JOIN%s+([%w_%.]+)") do
-    local name = table_name:match("%.([%w_]+)$") or table_name
-    table.insert(tables, name:lower())
+  -- Walk the text once, keyword by keyword, so the original case is kept
+  local upper = text:upper()
+  for _, keyword in ipairs({ "FROM", "JOIN", "INTO", "UPDATE" }) do
+    local init = 1
+    while true do
+      local s, e = upper:find("%f[%w_]" .. keyword .. "%f[^%w_]%s+", init)
+      if not s then
+        break
+      end
+      local ref = text:match("^([%w_%.`]+)", e + 1)
+      if ref then
+        add(ref)
+      end
+      init = e + 1
+    end
   end
 
   return tables
+end
+
+--- Names introduced by `WITH name AS (...)` common table expressions
+---@param text string
+---@return string[]
+function Parser.extract_cte_names(text)
+  local names = {}
+  local upper = text:upper()
+  local s, e = upper:find("%f[%w_]WITH%s+")
+  if not s then
+    return names
+  end
+  -- WITH a AS (...), b AS (...) SELECT ...
+  local init = e + 1
+  while true do
+    local name_s, name_e, name = text:find("^%s*,?%s*`?([%w_]+)`?%s+[Aa][Ss]%s*%(", init)
+    if not name_s then
+      break
+    end
+    table.insert(names, name)
+    -- Skip the balanced parenthesis block
+    local depth = 0
+    local i = name_e
+    while i <= #text do
+      local c = text:sub(i, i)
+      if c == "(" then
+        depth = depth + 1
+      elseif c == ")" then
+        depth = depth - 1
+        if depth == 0 then
+          break
+        end
+      end
+      i = i + 1
+    end
+    init = i + 1
+  end
+  return names
 end
 
 --- Extract table names and their aliases from SQL query
@@ -373,6 +430,37 @@ function Parser.resolve_alias(alias, query_text)
   end
 
   return nil, nil
+end
+
+--- Identifier under a column of a line: `name` or `qualifier.name`
+---@param line string
+---@param col number 0-based byte column
+---@return { name: string, qualifier: string|nil, start_col: number, end_col: number }|nil
+function Parser.identifier_at(line, col)
+  local pos = col + 1
+  if not line:sub(pos, pos):match("[%w_%.`]") then
+    return nil
+  end
+  local s = pos
+  while s > 1 and line:sub(s - 1, s - 1):match("[%w_%.`]") do
+    s = s - 1
+  end
+  local e = pos
+  while e <= #line and line:sub(e, e):match("[%w_%.`]") do
+    e = e + 1
+  end
+  local word = line:sub(s, e - 1):gsub("`", "")
+  if word == "" then
+    return nil
+  end
+  local qualifier, name = word:match("^([%w_]+)%.([%w_]+)$")
+  if not name then
+    name = word:match("^([%w_]+)%.?$")
+  end
+  if not name then
+    return nil
+  end
+  return { name = name, qualifier = qualifier, start_col = s - 1, end_col = e - 1 }
 end
 
 return Parser

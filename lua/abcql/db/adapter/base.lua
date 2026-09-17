@@ -6,6 +6,8 @@
 ---@field get_databases fun(self: abcql.db.adapter.Adapter, callback: fun(databases: table, err: string|nil))
 ---@field get_tables fun(self: abcql.db.adapter.Adapter, database: string, callback: fun(tables: table, err: string|nil))
 ---@field get_columns fun(self: abcql.db.adapter.Adapter, database: string, table_name: string, callback: fun(columns: table, err: string|nil))
+---@field get_all_columns? fun(self: abcql.db.adapter.Adapter, database: string, callback: fun(columns_by_table: table<string, table>|nil, err: string|nil)) Optional batched column fetch used by the LSP schema cache
+---@field get_all_constraints? fun(self: abcql.db.adapter.Adapter, database: string, callback: fun(constraints_by_table: table|nil, err: string|nil)) Optional batched constraint fetch used by hover
 ---@field escape_identifier fun(self: abcql.db.adapter.Adapter, name: string): string
 ---@field escape_value fun(self: abcql.db.adapter.Adapter, value: string): string
 local Adapter = {}

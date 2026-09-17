@@ -362,4 +362,64 @@ describe("Parser", function()
       assert.are.equal("o", context.resolved_from_alias)
     end)
   end)
+
+  describe("clause-based context", function()
+    it("keeps table context after a comma in FROM", function()
+      local context = Parser.parse_context("SELECT * FROM a, b", 19)
+      assert.are.equal("TABLE", context.type)
+      assert.are.equal("b", context.partial)
+    end)
+
+    it("works across lines", function()
+      local text = "SELECT\n  emp_no,\n  fi"
+      local context = Parser.parse_context(text, #text + 1)
+      assert.are.equal("COLUMN", context.type)
+      assert.are.equal("fi", context.partial)
+    end)
+
+    it("does not treat DESC in ORDER BY as a table clause", function()
+      local context = Parser.parse_context("SELECT * FROM t ORDER BY x DESC ", 33)
+      assert.are_not.equal("TABLE", context.type)
+    end)
+
+    it("strips backticks from qualifiers and partials", function()
+      local context = Parser.parse_context("SELECT `users`.`na", 19)
+      assert.are.equal("COLUMN", context.type)
+      assert.are.equal("users", context.table)
+      assert.are.equal("na", context.partial)
+    end)
+
+    it("reports the clause keyword", function()
+      assert.are.equal("INSERT INTO", Parser.parse_context("INSERT INTO t", 14).clause)
+    end)
+  end)
+
+  describe("extract_table_names (case and CTEs)", function()
+    it("keeps the original case and drops duplicates", function()
+      assert.are.same(
+        { "Employees", "Dept" },
+        Parser.extract_table_names("SELECT * FROM Employees JOIN Dept JOIN employees")
+      )
+    end)
+
+    it("skips CTE names and includes INTO/UPDATE targets", function()
+      local text = "WITH recent AS (SELECT * FROM logs) INSERT INTO archive SELECT * FROM recent"
+      assert.are.same({ "logs", "archive" }, Parser.extract_table_names(text))
+      assert.are.same({ "t" }, Parser.extract_table_names("UPDATE t SET x = 1"))
+    end)
+  end)
+
+  describe("identifier_at", function()
+    it("returns the word and qualifier under the column", function()
+      local ident = Parser.identifier_at("SELECT e.emp_no FROM Employees e", 11)
+      assert.are.equal("emp_no", ident.name)
+      assert.are.equal("e", ident.qualifier)
+      assert.are.equal(7, ident.start_col)
+      assert.are.equal(15, ident.end_col)
+    end)
+
+    it("returns nil on whitespace", function()
+      assert.is_nil(Parser.identifier_at("SELECT  x", 6))
+    end)
+  end)
 end)

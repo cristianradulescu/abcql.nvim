@@ -34,11 +34,12 @@ that server reachable (and the backend built) to pass.
 datacharmer/test_db's `employees` database — a richer schema for manually testing the tree/completion/
 results UI. It's unrelated to the `bookstore` fixture above and not part of `make test`.
 
-To run a single spec file directly:
+To run a single spec file directly (keep the `minimal_init` option: without it plenary's child
+Neovim loads the user's real config, including any language servers enabled there):
 
 ```bash
 nvim --headless --noplugin -u tests/minimal_init.lua \
-  -c "PlenaryBustedFile tests/abcql/db/adapter/mysql_spec.lua"
+  -c "PlenaryBustedDirectory tests/abcql/db/adapter/mysql_spec.lua { minimal_init = 'tests/minimal_init.lua' }"
 ```
 
 Specs live under `tests/abcql/` mirroring `lua/abcql/` (e.g. `lua/abcql/db/query.lua` ↔
@@ -123,12 +124,27 @@ Passwords can also be deferred to a keyring lookup
 
 `abcql.lsp` does not spawn an external language server. `LSP.start` calls `vim.lsp.start` with a
 `cmd` function that returns a hand-built RPC object (`request`/`notify`/`is_closing`/`terminate`)
-whose `request` handler dispatches `initialize`/`textDocument/completion`/`shutdown` directly to
-`abcql.lsp.server` in-process — no real process or socket involved. Schema (databases/tables/columns)
-is fetched from the adapter and cached per-datasource in `abcql.lsp.cache` before the client starts;
-`:AbcqlSchemaRefresh` clears and reloads that cache. `abcql.lsp.parser` does lightweight SQL context
-detection (are we after `FROM`, inside a column list, etc.) to drive what `abcql.lsp.completion`
-offers.
+whose `request` handler dispatches `initialize`, `textDocument/completion`, `textDocument/hover`,
+`textDocument/documentSymbol`, `textDocument/codeAction`, `workspace/symbol` and `shutdown`
+directly to `abcql.lsp.server` in-process — no real process or socket involved. There is one client
+and one `Server` per datasource (`reuse_client` matches on `settings.datasource`); buffers attach and
+detach, and the client stops when its last buffer detaches. Code actions carry `command`s
+(`abcql.run`, `abcql.browse`) executed through `config.commands`, or `WorkspaceEdit`s (expand `*`,
+INSERT template) applied by the client. The server resolves buffers from `textDocument.uri`, so
+buffers must be named for URIs to round-trip (tests name theirs with `tempname() .. ".sql"`).
+
+Schema (databases/tables/columns/constraints) is fetched from the adapter and cached per-datasource
+in `abcql.lsp.cache` before the client starts, using the adapter's batched `get_all_columns` /
+`get_all_constraints` (one query per database) when present and per-table `get_columns` otherwise;
+lookups are case-insensitive via `Cache:find_table`. `:AbcqlSchemaRefresh` clears and reloads the
+cache, and `Query.after_schema_change` does the same automatically after a successful
+CREATE/ALTER/DROP/RENAME. All context detection is statement-scoped: `Server:statement_at` uses
+`abcql.db.statements` to hand `abcql.lsp.parser` the current statement (text before the cursor for
+the clause, the whole statement for alias/table resolution). `Parser.last_clause` picks the
+completion context from the closest clause keyword before the cursor. Keywords are always offered,
+ranked after schema items via `sortText` groups (`Completion.RANK`). Diagnostics (unknown tables,
+skipping CTE names and CREATE statements) are pushed with `publishDiagnostics` from a debounced
+timer on `didOpen`/`didChange`.
 
 ### UI state machine
 

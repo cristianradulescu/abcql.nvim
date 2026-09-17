@@ -104,6 +104,85 @@ function MySQLAdapter:get_columns(database, table_name, callback)
   end)
 end
 
+--- Fetch the columns of every table in a database with one query
+--- @param database string Database name
+--- @param callback fun(columns_by_table: table<string, ColumnInfo[]>|nil, err: string|nil)
+function MySQLAdapter:get_all_columns(database, callback)
+  local query = string.format(
+    "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='%s' ORDER BY TABLE_NAME, ORDINAL_POSITION",
+    self:escape_value(database)
+  )
+
+  Query.execute_async(self, query, function(result, err)
+    if err then
+      callback(nil, err)
+      return
+    end
+
+    local by_table = {}
+    for _, row in ipairs(result.rows) do
+      if row[1] and row[2] then
+        by_table[row[1]] = by_table[row[1]] or {}
+        table.insert(by_table[row[1]], { name = row[2], type = row[3] or "" })
+      end
+    end
+
+    callback(by_table, nil)
+  end)
+end
+
+--- Fetch primary/foreign key constraints of every table in a database with one query
+--- @param database string Database name
+--- @param callback fun(constraints_by_table: table<string, { primary_key: string[], foreign_keys: table[] }>|nil, err: string|nil)
+function MySQLAdapter:get_all_constraints(database, callback)
+  local query = string.format(
+    [[SELECT
+      kcu.TABLE_NAME,
+      kcu.COLUMN_NAME,
+      tc.CONSTRAINT_TYPE,
+      kcu.REFERENCED_TABLE_NAME,
+      kcu.REFERENCED_COLUMN_NAME
+    FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+    JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+      ON kcu.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+      AND kcu.TABLE_SCHEMA = tc.TABLE_SCHEMA
+      AND kcu.TABLE_NAME = tc.TABLE_NAME
+    WHERE kcu.TABLE_SCHEMA='%s'
+    ORDER BY kcu.TABLE_NAME, tc.CONSTRAINT_TYPE, kcu.ORDINAL_POSITION]],
+    self:escape_value(database)
+  )
+
+  Query.execute_async(self, query, function(result, err)
+    if err then
+      callback(nil, err)
+      return
+    end
+
+    local by_table = {}
+    for _, row in ipairs(result.rows) do
+      local table_name, column_name, constraint_type, ref_table, ref_column = row[1], row[2], row[3], row[4], row[5]
+      by_table[table_name] = by_table[table_name] or { primary_key = {}, foreign_keys = {} }
+      if constraint_type == "PRIMARY KEY" then
+        table.insert(by_table[table_name].primary_key, column_name)
+      elseif
+        constraint_type == "FOREIGN KEY"
+        and ref_table
+        and ref_table ~= "NULL"
+        and ref_column
+        and ref_column ~= "NULL"
+      then
+        table.insert(by_table[table_name].foreign_keys, {
+          column = column_name,
+          ref_table = ref_table,
+          ref_column = ref_column,
+        })
+      end
+    end
+
+    callback(by_table, nil)
+  end)
+end
+
 --- Fetch constraints for a table asynchronously
 --- @param database string Database name
 --- @param table_name string Table name

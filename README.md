@@ -389,14 +389,27 @@ It validates:
 - Datasource config structure
 - Linux keyring secret configuration and lookup (`secret-tool`) when `secret` refs are configured
 
-### SQL Completion (LSP)
+### SQL Language Features (built-in LSP)
 
-`abcql.nvim` includes built-in Language Server Protocol (LSP) support for SQL completion. The LSP automatically starts when you activate a datasource and provides intelligent completions for:
+`abcql.nvim` registers an in-process language server with Neovim's built-in LSP client as soon as a
+datasource is attached to a buffer, so the usual LSP mappings and plugins (blink/cmp, `K`, `gO`,
+code actions, symbol pickers) work in SQL files without any external server. Context is derived
+from the statement under the cursor, so multi-line SELECT lists, aliases declared after the cursor
+and files with many statements all behave.
 
-- Database names (after `USE` keyword or as table qualifiers)
-- Table names (after `FROM`, `JOIN`, etc.)
-- Column names (in `SELECT`, `WHERE`, `ORDER BY`, etc.)
-- SQL keywords
+| Feature | What you get |
+|---|---|
+| Completion | Databases after `USE`; tables after `FROM`/`JOIN`/`INTO`/`UPDATE` (comma lists too); columns of the statement's tables after `SELECT`/`WHERE`/`ON`/`SET`/`ORDER BY`..., `alias.` and `table.` qualified; keywords always, ranked last |
+| INSERT snippets | After `INSERT INTO`, each table also offers a `(columns) VALUES (…)` snippet with one tab stop per column |
+| Hover (`K`) | A table shows its columns, types, primary key and foreign keys; a column shows its type, table and key info |
+| Document symbols (`gO`, symbol pickers) | One symbol per statement, named by its first keyword and tables |
+| Workspace symbols (`vim.lsp.buf.workspace_symbol`) | Fuzzy lookup of tables and columns of the datasource |
+| Code actions | Run this statement, browse the table under the cursor, expand `SELECT *` to the column list, insert an INSERT template for the table under the cursor |
+| Diagnostics | Tables that do not exist in the datasource are flagged as warnings (CTE names and `CREATE` statements are ignored) |
+
+The schema is loaded once per datasource with one query per database and shared by every buffer
+attached to it; `:AbcqlSchemaRefresh` reloads it, and a successful `CREATE`/`ALTER`/`DROP`/`RENAME`
+run through abcql reloads it automatically. Table lookups are case-insensitive.
 
 #### LSP Commands
 
