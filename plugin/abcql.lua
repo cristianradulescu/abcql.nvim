@@ -13,7 +13,7 @@ vim.g.loaded_abcql = true
 
 --- Open the ABCQL UI
 --- Creates a two-panel layout with query editor and results (tree hidden by default)
-vim.api.nvim_create_user_command("AbcqlOpen", function()
+vim.api.nvim_create_user_command("AbcqlUiOpen", function()
   require("abcql.ui").open()
 end, {
   desc = "Open ABCQL UI with query editor and results panel",
@@ -21,7 +21,7 @@ end, {
 
 --- Close the ABCQL UI
 --- Closes all windows and buffers associated with the ABCQL UI
-vim.api.nvim_create_user_command("AbcqlClose", function()
+vim.api.nvim_create_user_command("AbcqlUiClose", function()
   require("abcql.ui").close()
 end, {
   desc = "Close ABCQL UI and cleanup all associated windows and buffers",
@@ -29,7 +29,7 @@ end, {
 
 --- Toggle the visibility of the query results panel
 --- If visible, hides it; if hidden, shows it in the correct position
-vim.api.nvim_create_user_command("AbcqlToggleResults", function()
+vim.api.nvim_create_user_command("AbcqlResultsToggle", function()
   require("abcql.ui").toggle_results()
 end, {
   desc = "Toggle visibility of the ABCQL query results panel",
@@ -37,21 +37,21 @@ end, {
 
 --- Toggle the visibility of the data source tree panel
 --- If visible, hides it; if hidden, shows it in the correct position
-vim.api.nvim_create_user_command("AbcqlToggleTree", function()
+vim.api.nvim_create_user_command("AbcqlTreeToggle", function()
   require("abcql.ui").toggle_tree()
 end, {
   desc = "Toggle visibility of the ABCQL data source tree panel",
 })
 
 --- Execute the statement under the cursor
-vim.api.nvim_create_user_command("AbcqlExecute", function()
+vim.api.nvim_create_user_command("AbcqlQueryRun", function()
   require("abcql.db.query").execute_query_at_cursor()
 end, {
   desc = "Execute the SQL statement under the cursor",
 })
 
 --- Execute the visual selection as one statement
-vim.api.nvim_create_user_command("AbcqlExecuteSelection", function()
+vim.api.nvim_create_user_command("AbcqlQueryRunSelection", function()
   require("abcql.db.query").execute_selection()
 end, {
   desc = "Execute the visually selected SQL",
@@ -59,21 +59,21 @@ end, {
 })
 
 --- Execute every statement in the buffer, in order
-vim.api.nvim_create_user_command("AbcqlExecuteBuffer", function()
+vim.api.nvim_create_user_command("AbcqlQueryRunBuffer", function()
   require("abcql.db.query").execute_buffer()
 end, {
   desc = "Execute all SQL statements in the current buffer sequentially",
 })
 
 --- Cancel the running query
-vim.api.nvim_create_user_command("AbcqlCancel", function()
+vim.api.nvim_create_user_command("AbcqlQueryCancel", function()
   require("abcql.db.query").cancel()
 end, {
   desc = "Cancel the running abcql query",
 })
 
 --- Attach a datasource to the current buffer (prompts when no name is given)
-vim.api.nvim_create_user_command("AbcqlDatasource", function(opts)
+vim.api.nvim_create_user_command("AbcqlDatasourceAttach", function(opts)
   local name = opts.args ~= "" and opts.args or nil
   require("abcql.db").activate_datasource(vim.api.nvim_get_current_buf(), name)
 end, {
@@ -85,7 +85,7 @@ end, {
 })
 
 --- Pick a past query from history (re-run, insert or show its result)
-vim.api.nvim_create_user_command("AbcqlHistory", function()
+vim.api.nvim_create_user_command("AbcqlHistoryPick", function()
   require("abcql.history").pick({ bufnr = vim.api.nvim_get_current_buf() })
 end, {
   desc = "Browse query history",
@@ -117,7 +117,7 @@ end, {
 
 --- Refresh LSP schema cache for the current buffer's datasource
 --- Reloads databases, tables, and columns for SQL completion
-vim.api.nvim_create_user_command("AbcqlRefreshSchema", function()
+vim.api.nvim_create_user_command("AbcqlSchemaRefresh", function()
   local bufnr = vim.api.nvim_get_current_buf()
   local Database = require("abcql.db")
   local datasource = Database.get_active_datasource(bufnr)
@@ -138,7 +138,7 @@ end, {
 })
 
 --- Initialize a local .abcql.lua config file in the current working directory
-vim.api.nvim_create_user_command("AbcqlInitConfig", function(opts)
+vim.api.nvim_create_user_command("AbcqlConfigInit", function(opts)
   local loader = require("abcql.config.loader")
   local path, err
 
@@ -172,7 +172,7 @@ end, {
 })
 
 --- Interactively add a datasource to the local or user config file
-vim.api.nvim_create_user_command("AbcqlAddDatasource", function(opts)
+vim.api.nvim_create_user_command("AbcqlDatasourceAdd", function(opts)
   local scope = opts.args ~= "" and opts.args or nil
   if scope and scope ~= "local" and scope ~= "user" then
     vim.notify("abcql: scope must be 'local' or 'user'", vim.log.levels.WARN)
@@ -188,7 +188,7 @@ end, {
 })
 
 --- Interactively update a datasource defined in a config file
-vim.api.nvim_create_user_command("AbcqlUpdateDatasource", function(opts)
+vim.api.nvim_create_user_command("AbcqlDatasourceUpdate", function(opts)
   local name = opts.args ~= "" and opts.args or nil
   require("abcql.config").update_datasource(name)
 end, {
@@ -204,7 +204,7 @@ end, {
 })
 
 --- List all configured datasources with their source
-vim.api.nvim_create_user_command("AbcqlListDatasources", function()
+vim.api.nvim_create_user_command("AbcqlDatasourceList", function()
   local config = require("abcql.config")
   local loaded = config.get_loaded_datasources()
 
@@ -234,7 +234,7 @@ end, {
 })
 
 --- Reload datasources from config files
-vim.api.nvim_create_user_command("AbcqlReloadDatasources", function()
+vim.api.nvim_create_user_command("AbcqlDatasourceReload", function()
   require("abcql.config").reload_datasources()
 end, {
   desc = "Reload datasources from config files",

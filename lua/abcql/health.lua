@@ -119,7 +119,7 @@ local function check_datasource_configs(datasources)
   if vim.tbl_isempty(datasources) then
     health.warn("No datasources configured", {
       "Create .abcql.lua in your project or ~/.config/nvim/abcql/datasources.lua",
-      "Use :AbcqlInitConfig to scaffold a config file.",
+      "Use :AbcqlConfigInit to scaffold a config file.",
     })
     return {}
   end

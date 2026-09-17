@@ -97,15 +97,15 @@ connection now.
 
 Datasources merge from three sources, later wins: `setup()` opts → `~/.config/nvim/abcql/datasources.lua`
 (user) → `.abcql.lua` in cwd (local/project, highest priority). `abcql.config.loader` does the
-merging and tags each datasource with `source`/`source_path` for `:AbcqlListDatasources`. DSN and
+merging and tags each datasource with `source`/`source_path` for `:AbcqlDatasourceList`. DSN and
 proxy strings support `${VAR_NAME}` env expansion. Table-style datasources may also carry
 `readonly`/`confirm`/`highlight` flags, which travel through the loader and
 `registry:register_datasource(name, dsn, proxy, secret, opts)` onto the `Datasource` object; each
 config file (and `setup()`) may name a `default` datasource, same precedence. `setup()` also has
 `ui` (panel sizes, icons, cell width) and `query` (confirm policy, `max_rows`, `auto_attach`,
 `treesitter`) sections; modules read them via `require("abcql.config").ui/.query` with local
-fallbacks so they still work when config was never set up (tests). `:AbcqlAddDatasource` /
-`:AbcqlUpdateDatasource` edit config files textually: `loader.add_datasource_to_file` inserts an
+fallbacks so they still work when config was never set up (tests). `:AbcqlDatasourceAdd` /
+`:AbcqlDatasourceUpdate` edit config files textually: `loader.add_datasource_to_file` inserts an
 entry right after the `datasources = {` line and `loader.update_datasource_in_file` replaces the
 brace-matched line range found by `find_datasource_entry`, so comments and sibling entries survive;
 both re-trust the file for `vim.secure.read`. The prompt flows live in `abcql.config.editor`
@@ -126,7 +126,7 @@ Passwords can also be deferred to a keyring lookup
 whose `request` handler dispatches `initialize`/`textDocument/completion`/`shutdown` directly to
 `abcql.lsp.server` in-process — no real process or socket involved. Schema (databases/tables/columns)
 is fetched from the adapter and cached per-datasource in `abcql.lsp.cache` before the client starts;
-`:AbcqlRefreshSchema` clears and reloads that cache. `abcql.lsp.parser` does lightweight SQL context
+`:AbcqlSchemaRefresh` clears and reloads that cache. `abcql.lsp.parser` does lightweight SQL context
 detection (are we after `FROM`, inside a column list, etc.) to drive what `abcql.lsp.completion`
 offers.
 
@@ -152,7 +152,7 @@ byte offsets from `state.current_widths` and `state.table_top_line`, so anything
 table's rendering must keep those in sync. All highlighting goes through extmarks
 (`highlights.add`); `nvim_buf_add_highlight`/`nvim_buf_set_option` are not used. The tree renders
 to `lines, highlights` and keeps its node cache across redraws; `R` (`Tree.reload_node`) drops a
-subtree and refetches, `Tree.reset()` drops everything (called from `:AbcqlReloadDatasources`).
+subtree and refetches, `Tree.reset()` drops everything (called from `:AbcqlDatasourceReload`).
 
 ### Query lifecycle
 
@@ -168,7 +168,7 @@ is the single execution path: readonly guard → confirmation float (policy: dat
 (handle kept for `Query.cancel`) → `abcql.history` save → `UI.display`. Results are rendered by
 `abcql.ui.display` (error strings, `write`-type results, and `select`-type tables). History
 navigation (`<C-o>`/`<C-i>`/`[h`/`]h` in the results buffer, or `:AbcqlHistoryBack`/`Forward`)
-replays past query+result/error pairs into the same results buffer; `:AbcqlHistory` is a
+replays past query+result/error pairs into the same results buffer; `:AbcqlHistoryPick` is a
 `vim.ui.select` picker (`History.pick`) that can re-run, insert, or show an entry.
 
 ### Export

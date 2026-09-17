@@ -184,7 +184,7 @@ function Database.activate_datasource(bufnr, datasource_name, callback)
 
   local names = Database.get_datasource_names()
   if #names == 0 then
-    vim.notify("abcql: no datasources configured (see :AbcqlInitConfig)", vim.log.levels.WARN)
+    vim.notify("abcql: no datasources configured (see :AbcqlConfigInit)", vim.log.levels.WARN)
     if callback then
       callback(nil, "No datasources configured")
     end

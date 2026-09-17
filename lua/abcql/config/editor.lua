@@ -365,7 +365,7 @@ end
 function M.update(name)
   local items = M.editable_datasources()
   if #items == 0 then
-    vim.notify("abcql: no datasources in config files to update (use :AbcqlAddDatasource)", vim.log.levels.WARN)
+    vim.notify("abcql: no datasources in config files to update (use :AbcqlDatasourceAdd)", vim.log.levels.WARN)
     return
   end
 

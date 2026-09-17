@@ -51,7 +51,7 @@ once (and again after each plugin update) — see [Backend](#backend).
     vim.keymap.set({ "n" }, "<leader>ST", function() abcql_ui.toggle_tree() end, { desc = "abcql tree" })
     vim.keymap.set({ "n" }, "<leader>SR", function() abcql_ui.toggle_results() end, { desc = "abcql results" })
     vim.keymap.set({ "n" }, "<leader>Se", function() require("abcql.db.query").execute_query_at_cursor() end, { desc = "abcql execute query" })
-    vim.keymap.set({ "x" }, "<leader>Se", "<Esc><Cmd>AbcqlExecuteSelection<CR>", { desc = "abcql execute selection" })
+    vim.keymap.set({ "x" }, "<leader>Se", "<Esc><Cmd>AbcqlQueryRunSelection<CR>", { desc = "abcql execute selection" })
     vim.keymap.set({ "n" }, "<leader>SE", function() require("abcql.db.query").execute_buffer() end, { desc = "abcql execute whole buffer" })
     vim.keymap.set({ "n" }, "<leader>SD", function() require("abcql.db").activate_datasource(vim.api.nvim_get_current_buf()) end, { desc = "abcql activate datasource" })
     vim.keymap.set({ "n" }, "<leader>SH", function() require("abcql.history").pick() end, { desc = "abcql query history" })
@@ -86,8 +86,8 @@ return {
 }
 ```
 
-You can use `:AbcqlInitConfig` to generate a template file, `:AbcqlAddDatasource` to add entries
-to it interactively, and `:AbcqlUpdateDatasource` to edit them later.
+You can use `:AbcqlConfigInit` to generate a template file, `:AbcqlDatasourceAdd` to add entries
+to it interactively, and `:AbcqlDatasourceUpdate` to edit them later.
 
 > **Important:** Add `.abcql.lua` to your `.gitignore` to avoid committing credentials.
 
@@ -114,7 +114,7 @@ return {
 }
 ```
 
-`:AbcqlDatasource [name]` attaches a datasource explicitly (with tab completion); without a name it
+`:AbcqlDatasourceAttach [name]` attaches a datasource explicitly (with tab completion); without a name it
 opens the picker. The attached datasource is shown in the buffer's winbar.
 
 #### Safety Flags
@@ -201,21 +201,21 @@ return {
 
 #### Datasource Commands
 
-- `:AbcqlDatasource [name]` - Attach a datasource to the current buffer (picker when no name)
-- `:AbcqlAddDatasource [local|user]` - Add a datasource interactively (name, DSN, optional
+- `:AbcqlDatasourceAttach [name]` - Attach a datasource to the current buffer (picker when no name)
+- `:AbcqlDatasourceAdd [local|user]` - Add a datasource interactively (name, DSN, optional
   readonly / always-confirm / SOCKS proxy); it is appended to `.abcql.lua` or the user config
   (created from the template if missing), datasources are reloaded, and you can attach it to the
   current SQL buffer right away. When `secret-tool` is installed it also offers to keep the
   password in the keyring instead of the file: the password is stored under
   `service abcql / account <name>-db-password`, stripped from the DSN, and referenced with a
   `secret = { ... }` block
-- `:AbcqlUpdateDatasource [name]` - Edit a datasource that lives in a config file: a menu lets
+- `:AbcqlDatasourceUpdate [name]` - Edit a datasource that lives in a config file: a menu lets
   you change the DSN, the password (in the DSN, or moved to / taken back from the keyring),
   readonly, the confirm policy and the proxy, then `Save` rewrites just that entry in place
-- `:AbcqlInitConfig` - Create a template `.abcql.lua` in the current directory
-- `:AbcqlInitConfig user` - Create a template in the user config directory
-- `:AbcqlListDatasources` - Show all configured datasources with their source
-- `:AbcqlReloadDatasources` - Reload datasources from config files (also rebuilds the tree)
+- `:AbcqlConfigInit` - Create a template `.abcql.lua` in the current directory
+- `:AbcqlConfigInit user` - Create a template in the user config directory
+- `:AbcqlDatasourceList` - Show all configured datasources with their source
+- `:AbcqlDatasourceReload` - Reload datasources from config files (also rebuilds the tree)
 
 ### Plugin Options
 
@@ -280,6 +280,23 @@ require("abcql").setup({
 
 ## Usage
 
+### Commands
+
+Every command is `Abcql<Subject><Action>`, so typing `:AbcqlDatasource` and pressing `<Tab>`
+lists all datasource actions:
+
+| Subject      | Commands                                                                                     |
+|--------------|----------------------------------------------------------------------------------------------|
+| `Ui`         | `AbcqlUiOpen`, `AbcqlUiClose`                                                                |
+| `Results`    | `AbcqlResultsToggle`                                                                         |
+| `Tree`       | `AbcqlTreeToggle`                                                                            |
+| `Query`      | `AbcqlQueryRun`, `AbcqlQueryRunSelection`, `AbcqlQueryRunBuffer`, `AbcqlQueryCancel`         |
+| `Datasource` | `AbcqlDatasourceAttach [name]`, `AbcqlDatasourceAdd [local\|user]`, `AbcqlDatasourceUpdate [name]`, `AbcqlDatasourceList`, `AbcqlDatasourceReload` |
+| `History`    | `AbcqlHistoryPick`, `AbcqlHistoryBack`, `AbcqlHistoryForward`, `AbcqlHistoryInfo`, `AbcqlHistoryClear` |
+| `Schema`     | `AbcqlSchemaRefresh`                                                                         |
+| `Export`     | `AbcqlExportCsv`, `AbcqlExportTsv`, `AbcqlExportJson`                                        |
+| `Config`     | `AbcqlConfigInit [local\|user]`                                                              |
+
 ### Trying it Out
 
 No database handy? `make test-db-up` spins up a MySQL container preloaded with the
@@ -298,11 +315,11 @@ the datasource attaches itself, the UI opens, and the results appear below the e
 
 | Action                                   | Command / mapping                                   |
 |------------------------------------------|-----------------------------------------------------|
-| Run the statement under the cursor       | `:AbcqlExecute` (`<leader>Se` in the example config) |
-| Run the visual selection as one statement| `:AbcqlExecuteSelection` (visual `<leader>Se`)      |
-| Run every statement in the buffer        | `:AbcqlExecuteBuffer` (`<leader>SE`)                |
-| Cancel the running query                 | `:AbcqlCancel`, or `<C-c>` in the results panel     |
-| Browse history                           | `:AbcqlHistory` (`<leader>SH`)                      |
+| Run the statement under the cursor       | `:AbcqlQueryRun` (`<leader>Se` in the example config) |
+| Run the visual selection as one statement| `:AbcqlQueryRunSelection` (visual `<leader>Se`)      |
+| Run every statement in the buffer        | `:AbcqlQueryRunBuffer` (`<leader>SE`)                |
+| Cancel the running query                 | `:AbcqlQueryCancel`, or `<C-c>` in the results panel     |
+| Browse history                           | `:AbcqlHistoryPick` (`<leader>SH`)                      |
 
 Statements are split on `;` with awareness of strings, backtick identifiers and `--`/`#`/`/* */`
 comments, so several statements can share a line and a `;` inside a string does not split. When a
@@ -332,7 +349,7 @@ duration. Result sets are capped at `query.max_rows`; the footer reads `showing 
 
 ### Datasource Tree
 
-`:AbcqlToggleTree` (`<leader>ST`) opens the explorer to the right of the editor. It expands the
+`:AbcqlTreeToggle` (`<leader>ST`) opens the explorer to the right of the editor. It expands the
 datasource attached to the editor buffer (and the database from its DSN) automatically.
 
 | Key          | Action                                                     |
@@ -350,7 +367,7 @@ Set `ui = { icons = false }` if you do not use a Nerd Font.
 ### Query History
 
 Every execution (success, error or cancellation) is stored under `stdpath("data")/abcql/query_history`
-(last 100 entries, up to 1000 rows each). `:AbcqlHistory` opens a picker over recent entries; for the
+(last 100 entries, up to 1000 rows each). `:AbcqlHistoryPick` opens a picker over recent entries; for the
 chosen one you can re-run it on its original datasource, insert it below the cursor, or show the
 stored result. `:AbcqlHistoryBack` / `:AbcqlHistoryForward` (or `<C-o>` / `<C-i>` in the results
 panel) step through entries in place, with the query shown above the result. `:AbcqlHistoryClear`
@@ -383,7 +400,7 @@ It validates:
 
 #### LSP Commands
 
-- `:AbcqlRefreshSchema` - Reload schema cache for the current buffer's datasource
+- `:AbcqlSchemaRefresh` - Reload schema cache for the current buffer's datasource
 
 ### Exporting Query Results
 

@@ -245,7 +245,7 @@ function Query.run(sql, datasource, opts)
   end
 
   if running then
-    vim.notify("abcql: a query is already running (:AbcqlCancel to stop it)", vim.log.levels.WARN)
+    vim.notify("abcql: a query is already running (:AbcqlQueryCancel to stop it)", vim.log.levels.WARN)
     finish(nil, "busy")
     return
   end
