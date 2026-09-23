@@ -44,6 +44,7 @@ function M.setup()
   vim.api.nvim_set_hl(0, "AbcqlNumber", { link = "Number", default = true })
   vim.api.nvim_set_hl(0, "AbcqlString", { link = "String", default = true })
   vim.api.nvim_set_hl(0, "AbcqlBoolean", { link = "Boolean", default = true })
+  vim.api.nvim_set_hl(0, "AbcqlBinary", { link = "Special", default = true })
 
   -- Alternating rows (subtle background difference)
   vim.api.nvim_set_hl(0, "AbcqlRowEven", { default = true })
@@ -86,6 +87,13 @@ local function is_number(str)
   end
   -- Match integers, decimals, negative numbers, scientific notation
   return str:match("^%-?%d+%.?%d*$") ~= nil or str:match("^%-?%d+%.%d+[eE][+-]?%d+$") ~= nil
+end
+
+--- Check if a string is a hex literal, which is how abcql-backend renders binary values
+--- @param str string
+--- @return boolean
+local function is_binary(str)
+  return str:match("^0x%x+$") ~= nil
 end
 
 --- Check if a string looks like a boolean
@@ -189,6 +197,8 @@ function M.apply_highlights(buf, results, line_offset, widths)
         cell_hl = "AbcqlBoolean"
       elseif is_number(cell_str) then
         cell_hl = "AbcqlNumber"
+      elseif is_binary(cell_str) then
+        cell_hl = "AbcqlBinary"
       else
         cell_hl = "AbcqlString"
       end
