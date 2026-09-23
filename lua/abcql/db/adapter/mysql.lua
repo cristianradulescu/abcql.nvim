@@ -161,7 +161,8 @@ function MySQLAdapter:get_all_constraints(database, callback)
 
     local by_table = {}
     for _, row in ipairs(result.rows) do
-      local table_name, column_name, constraint_type, ref_table, ref_column = row[1], row[2], row[3], row[4], row[5]
+      local table_name, column_name, constraint_type, ref_table, ref_column, constraint_name =
+        row[1], row[2], row[3], row[4], row[5], row[6]
       by_table[table_name] = by_table[table_name] or { primary_key = {}, foreign_keys = {} }
       if constraint_type == "PRIMARY KEY" then
         table.insert(by_table[table_name].primary_key, column_name)
@@ -176,6 +177,8 @@ function MySQLAdapter:get_all_constraints(database, callback)
           column = column_name,
           ref_table = ref_table,
           ref_column = ref_column,
+          -- Groups the columns of a composite key (LSP join suggestions)
+          constraint = constraint_name,
         })
       end
     end
@@ -187,14 +190,15 @@ end
 --- Fetch constraints for a table asynchronously
 --- @param database string Database name
 --- @param table_name string Table name
---- @param callback function Called with (constraints, error) where constraints is { primary_key: string[], foreign_keys: {column, ref_table, ref_column}[] }
+--- @param callback function Called with (constraints, error) where constraints is { primary_key: string[], foreign_keys: {column, ref_table, ref_column, constraint}[] }
 function MySQLAdapter:get_constraints(database, table_name, callback)
   local query = string.format(
     [[SELECT
       kcu.COLUMN_NAME,
       tc.CONSTRAINT_TYPE,
       kcu.REFERENCED_TABLE_NAME,
-      kcu.REFERENCED_COLUMN_NAME
+      kcu.REFERENCED_COLUMN_NAME,
+      kcu.CONSTRAINT_NAME
     FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
     JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
       ON kcu.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
@@ -222,6 +226,7 @@ function MySQLAdapter:get_constraints(database, table_name, callback)
       local constraint_type = row[2]
       local ref_table = row[3]
       local ref_column = row[4]
+      local constraint_name = row[5]
 
       if constraint_type == "PRIMARY KEY" then
         table.insert(constraints.primary_key, column_name)
@@ -230,6 +235,7 @@ function MySQLAdapter:get_constraints(database, table_name, callback)
           column = column_name,
           ref_table = ref_table,
           ref_column = ref_column,
+          constraint = constraint_name,
         })
       end
     end

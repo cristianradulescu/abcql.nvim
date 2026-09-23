@@ -127,3 +127,59 @@ describe("MySQLAdapter", function()
     end)
   end)
 end)
+
+describe("MySQLAdapter constraint names", function()
+  local Query = require("abcql.db.query")
+  local original_execute_async
+  local rows
+  local adapter
+
+  before_each(function()
+    adapter = MySQLAdapter.new({ database = "shop" })
+    original_execute_async = Query.execute_async
+    Query.execute_async = function(_, _, callback)
+      callback({ rows = rows }, nil)
+    end
+  end)
+
+  after_each(function()
+    Query.execute_async = original_execute_async
+  end)
+
+  it("tags every column of a composite foreign key with its constraint in get_all_constraints", function()
+    rows = {
+      { "lines", "order_id", "FOREIGN KEY", "orders", "id", "fk_lines_order" },
+      { "lines", "shop_id", "FOREIGN KEY", "orders", "shop_id", "fk_lines_order" },
+      { "lines", "sku", "FOREIGN KEY", "products", "sku", "fk_lines_product" },
+      { "lines", "id", "PRIMARY KEY", "NULL", "NULL", "PRIMARY" },
+    }
+    local result
+    adapter:get_all_constraints("shop", function(by_table)
+      result = by_table
+    end)
+
+    local fks = result.lines.foreign_keys
+    assert.are.same({ "fk_lines_order", "fk_lines_order", "fk_lines_product" }, {
+      fks[1].constraint,
+      fks[2].constraint,
+      fks[3].constraint,
+    })
+    assert.are.same({ "id" }, result.lines.primary_key)
+  end)
+
+  it("tags foreign keys with their constraint in get_constraints", function()
+    rows = {
+      { "order_id", "FOREIGN KEY", "orders", "id", "fk_lines_order" },
+      { "shop_id", "FOREIGN KEY", "orders", "shop_id", "fk_lines_order" },
+    }
+    local result
+    adapter:get_constraints("shop", "lines", function(constraints)
+      result = constraints
+    end)
+
+    assert.are.same(
+      { column = "shop_id", ref_table = "orders", ref_column = "shop_id", constraint = "fk_lines_order" },
+      result.foreign_keys[2]
+    )
+  end)
+end)
