@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `abcql.nvim` is a Neovim plugin (Lua, requires Neovim >= 0.11.0) implementing a DataGrip/DBeaver-style
 database client inside the editor: connection management, a query editor + results UI, schema tree,
 SQL completion via an in-process LSP, and result export. Queries are executed by `abcql-backend`, a Go
-binary in `backend/` (own Go module) built via `make build` — it talks to the database directly via a
-native driver and is usable standalone, independent of Neovim.
+binary in `backend/` (own Go module) built via `make build` — it talks to the database (MySQL or a
+SQLite file) directly via a native driver and is usable standalone, independent of Neovim.
 
 ## Commands
 
@@ -90,9 +90,21 @@ Adding a new database engine now takes two changes: a Lua adapter implementing
 `abcql.db.adapter.base`'s interface (`get_databases`/`get_tables`/`get_columns`,
 `escape_identifier`/`escape_value`, an `ENGINE` string constant) registered via
 `connectionRegistry:register_adapter(scheme, AdapterClass)` in `abcql.db.Database.setup`, *and* a
-matching branch in the Go backend's `execRequest` (`backend/mysql.go` is currently the only one) that
-handles that `Request.Engine` value — the backend is the only thing that actually opens a database
-connection now.
+matching branch in the Go backend's `execRequest` (`backend/exec.go`) that handles that
+`Request.Engine` value — the backend is the only thing that actually opens a database connection now.
+`exec.go` holds the engine-independent part (`runSQL`: timeout, Exec-vs-Query, row cap, cell
+formatting); an engine file (`mysql.go`, `sqlite.go`) opens the `*sql.DB` and supplies a
+`ColumnType -> columnKind` function telling the formatter which columns are binary (hex `0x…`),
+BIT or DATE.
+
+SQLite (`sqlite://<path>`, `abcql.db.adapter.sqlite`) is file-based: `abcql.db.connection.dsn`
+special-cases schemes in `FILE_SCHEMES`, resolving the path (`~`, relative to cwd) into
+`config.path` and setting `config.database = "main"` (the SQLite schema name) so the tree, LSP
+cache and qualified names work unchanged; `SQLiteAdapter:build_backend_request` sends the path as
+the request's `database`. Schema introspection uses the `pragma_table_info`/`pragma_foreign_key_list`/
+`pragma_index_list` table-valued functions. The backend refuses a missing file (SQLite would
+silently create it), enables `foreign_keys`, and sets a busy timeout. `abcql.config.editor` skips
+the password/keyring and proxy prompts for file DSNs.
 
 ### Layered config resolution
 

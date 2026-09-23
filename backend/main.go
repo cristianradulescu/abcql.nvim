@@ -4,6 +4,8 @@
 //
 //	echo '{"engine":"mysql","host":"127.0.0.1","port":3306,"user":"root",
 //	       "database":"shop","sql":"select 1"}' | abcql-backend exec
+//	echo '{"engine":"sqlite","database":"/path/to/app.db",
+//	       "sql":"select 1"}' | abcql-backend exec
 package main
 
 import (
@@ -46,11 +48,6 @@ func runExec(in io.Reader, out io.Writer) int {
 	var req Request
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeResponse(out, &Response{Error: "failed to parse request JSON: " + err.Error()})
-		return 1
-	}
-
-	if req.Engine != "" && req.Engine != "mysql" {
-		writeResponse(out, &Response{Error: fmt.Sprintf("unsupported engine %q", req.Engine)})
 		return 1
 	}
 

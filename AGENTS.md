@@ -1,8 +1,8 @@
 # AGENTS.md — abcql.nvim
 
-Neovim plugin (Lua) providing a DataGrip/DBeaver-style database client. Currently MySQL-only. Requires
+Neovim plugin (Lua) providing a DataGrip/DBeaver-style database client for MySQL and SQLite. Requires
 Neovim >= 0.11.0 and `nvim-lua/plenary.nvim`. Query execution is delegated to `abcql-backend`, a Go
-binary in `backend/` (its own Go module) — no MySQL client library or CLI dependency on the Lua side.
+binary in `backend/` (its own Go module) — no database client library or CLI dependency on the Lua side.
 
 ## Developer Commands
 
@@ -63,10 +63,10 @@ Not used by `make test`. See `docker/README.md`; quick start: `make test-db-up`.
 
 ## Architecture
 
-- `backend/` — separate Go module (`abcql-backend`); one `main` package, `go.mod`/`go.sum` at its root, built via `make build` into `bin/abcql-backend` (gitignored). Reads one JSON request from stdin, executes it against MySQL via `database/sql` + `go-sql-driver/mysql`, writes one JSON response to stdout, exits. Also usable standalone (see README "Backend" section).
+- `backend/` — separate Go module (`abcql-backend`); one `main` package, `go.mod`/`go.sum` at its root, built via `make build` into `bin/abcql-backend` (gitignored). Reads one JSON request from stdin, executes it via `database/sql` (`go-sql-driver/mysql` in `mysql.go`, pure-Go `modernc.org/sqlite` in `sqlite.go`; engine dispatch and the shared query/row-formatting code in `exec.go`), writes one JSON response to stdout, exits. Also usable standalone (see README "Backend" section).
 - `lua/abcql/backend/init.lua` — spawns `bin/abcql-backend` as a one-shot subprocess per query via `vim.system` (`invoke`/`invoke_sync`); resolves the binary path from `config.backend.path` or the plugin's own runtime directory.
 - `lua/abcql/init.lua` — plugin entry point
-- `lua/abcql/db/adapter/` — adapter pattern; `mysql.lua` is the only concrete impl; adding a DB = new adapter file here **and** a matching engine branch in `backend/mysql.go`'s dispatch (see CLAUDE.md)
+- `lua/abcql/db/adapter/` — adapter pattern; `mysql.lua` and `sqlite.lua`; adding a DB = new adapter file here **and** a matching engine branch in `execRequest` (`backend/exec.go`) (see CLAUDE.md)
 - `lua/abcql/config.lua` — metatable proxy; do not hold a reference to the internal table directly
 - `lua/abcql/db/init.lua` — buffer-to-datasource registry keyed by `bufnr`; LSP server starts when a datasource activates
 - `plugin/abcql.lua` — registers all `:AbcqlXxx` commands at startup; guarded by `vim.g.loaded_abcql`
@@ -80,7 +80,7 @@ Not used by `make test`. See `docker/README.md`; quick start: `make test-db-up`.
 | `jq` | JSON export |
 | `secret-tool` | Linux keyring (optional) |
 
-No `mysql` CLI or `proxychains4` dependency anymore — the Go backend uses a native MySQL driver and
+No `mysql`/`sqlite3` CLI or `proxychains4` dependency — the Go backend uses native drivers and
 dials SOCKS5 proxies itself (`golang.org/x/net/proxy`).
 
 `${VAR_NAME}` env var expansion is supported in DSN strings.

@@ -92,13 +92,21 @@ local function dsn_password(entry)
   return password
 end
 
+--- Whether the entry's DSN names a local database file (no password, no proxy)
+--- @param entry table
+--- @return boolean
+local function is_file_dsn(entry)
+  local scheme = (entry.dsn or ""):match("^(%w+)://")
+  return scheme ~= nil and require("abcql.db.connection.dsn").FILE_SCHEMES[scheme:lower()] == true
+end
+
 --- Ask where the password should live (DSN or keyring). Calls back once the
 --- entry reflects the choice; the keyring step is skipped without secret-tool.
 --- @param name string
 --- @param entry table
 --- @param callback fun()
 local function ask_password_storage(name, entry, callback)
-  if not require("abcql.secret").is_available() then
+  if is_file_dsn(entry) or not require("abcql.secret").is_available() then
     callback()
     return
   end
@@ -136,7 +144,11 @@ end
 --- @param entry table
 --- @param callback fun()
 local function ask_options(name, entry, callback)
-  choose("Options for '" .. name .. "':", { "None", "Readonly", "Always confirm", "SOCKS proxy" }, function(opt)
+  local options = { "None", "Readonly", "Always confirm" }
+  if not is_file_dsn(entry) then
+    table.insert(options, "SOCKS proxy")
+  end
+  choose("Options for '" .. name .. "':", options, function(opt)
     if opt == "Readonly" then
       entry.readonly = true
       entry.highlight = "DiagnosticWarn"
@@ -174,6 +186,7 @@ function M.add(scope)
         vim.notify("abcql: a name is required", vim.log.levels.WARN)
         return
       end
+      -- sqlite:///path/to/file.db for a SQLite database
       ask("DSN: ", "mysql://user:password@localhost:3306/database", function(dsn)
         if dsn == "" then
           vim.notify("abcql: a DSN is required", vim.log.levels.WARN)
@@ -285,14 +298,16 @@ local function edit_loop(name, entry, on_save)
     edit_loop(name, entry, on_save)
   end
 
-  local items = {
-    "Save",
-    "DSN: " .. (entry.dsn or ""),
-    "Password: " .. (entry.secret and "keyring" or (dsn_password(entry) and "in DSN" or "none")),
-    "Readonly: " .. (entry.readonly and "on" or "off"),
-    "Confirm: " .. (entry.confirm or "default"),
-    "Proxy: " .. (entry.proxy or "none"),
-  }
+  local file = is_file_dsn(entry)
+  local items = { "Save", "DSN: " .. (entry.dsn or "") }
+  if not file then
+    table.insert(items, "Password: " .. (entry.secret and "keyring" or (dsn_password(entry) and "in DSN" or "none")))
+  end
+  table.insert(items, "Readonly: " .. (entry.readonly and "on" or "off"))
+  table.insert(items, "Confirm: " .. (entry.confirm or "default"))
+  if not file then
+    table.insert(items, "Proxy: " .. (entry.proxy or "none"))
+  end
 
   choose("Update '" .. name .. "' (" .. describe(entry) .. "):", items, function(choice)
     local field = choice:match("^(%a+)")

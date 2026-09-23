@@ -29,7 +29,7 @@ function Database.setup(config)
   -- Register built-in adapters
   local MySQLAdapter = require("abcql.db.adapter.mysql")
   Database.connectionRegistry:register_adapter("mysql", MySQLAdapter)
-  -- @TODO: Register other adapters like PostgreSQL, SQLite, etc.
+  Database.connectionRegistry:register_adapter("sqlite", require("abcql.db.adapter.sqlite"))
 
   -- Register data sources from config
   for name, ds_config in pairs(config.datasources or {}) do

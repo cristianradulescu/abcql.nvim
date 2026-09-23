@@ -89,6 +89,7 @@ function Registry:register_datasource(name, dsn, proxy, secret, opts)
     user = parsed.user,
     password = password,
     database = parsed.database,
+    path = parsed.path,
     options = parsed.options,
     proxy = proxy,
   })

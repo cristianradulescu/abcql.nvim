@@ -68,6 +68,48 @@ describe("dsn_handler", function()
       assert.is_not_nil(err)
     end)
 
+    it("should parse an absolute SQLite file DSN", function()
+      local parsed, err = dsn_handler.parse_dsn("sqlite:///var/data/app.db")
+
+      assert.is_nil(err)
+      assert.are.equal("sqlite", parsed.scheme)
+      assert.are.equal("/var/data/app.db", parsed.path)
+      assert.are.equal("main", parsed.database)
+      assert.is_nil(parsed.host)
+    end)
+
+    it("should resolve a relative SQLite path against the current directory", function()
+      local parsed = dsn_handler.parse_dsn("sqlite://data/app.db")
+
+      assert.are.equal(vim.fn.getcwd() .. "/data/app.db", parsed.path)
+    end)
+
+    it("should expand ~ in a SQLite path", function()
+      local parsed = dsn_handler.parse_dsn("sqlite://~/app.db")
+
+      assert.are.equal(vim.fn.expand("~") .. "/app.db", parsed.path)
+    end)
+
+    it("should parse SQLite DSN options", function()
+      local parsed = dsn_handler.parse_dsn("sqlite:///app.db?_txlock=immediate")
+
+      assert.are.equal("/app.db", parsed.path)
+      assert.are.equal("immediate", parsed.options._txlock)
+    end)
+
+    it("should keep :memory: as is", function()
+      local parsed = dsn_handler.parse_dsn("sqlite://:memory:")
+
+      assert.are.equal(":memory:", parsed.path)
+    end)
+
+    it("should reject a SQLite DSN without a path", function()
+      local parsed, err = dsn_handler.parse_dsn("sqlite://")
+
+      assert.is_nil(parsed)
+      assert.matches("Invalid DSN format", err)
+    end)
+
     it("should normalize scheme to lowercase", function()
       local dsn = "MySQL://user:password@localhost:3306/mydb"
       local parsed, err = dsn_handler.parse_dsn(dsn)

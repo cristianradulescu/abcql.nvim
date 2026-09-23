@@ -27,6 +27,7 @@ local defaults = {
     -- Examples:
     -- shop_dev = "mysql://user:password@localhost:3306/shop_db",
     -- shop_prod = "mysql://user:password@prodserv:3306/shop_db",
+    -- shop_local = "sqlite:///home/me/shop.db",
   },
   -- Datasource attached automatically to SQL buffers when none is chosen
   -- explicitly. A `default` in `.abcql.lua` takes precedence over this.

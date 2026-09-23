@@ -11,7 +11,7 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
 
 ## Features
 
-- Connect to MySQL databases via connection strings
+- Connect to MySQL servers and SQLite database files via connection strings
 - Manage multiple datasources/environments, with a per-project default and per-file
   `-- abcql: <name>` overrides so `.sql` files attach themselves
 - Run the statement under the cursor, a visual selection, or a whole file; cancel long queries
@@ -23,8 +23,8 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
 - Query history with a picker to re-run or paste past queries
 - Export query results to CSV, TSV, and JSON formats
 - SQL completion with LSP support (databases, tables, columns, keywords)
-- Queries run through `abcql-backend`, a small Go binary bundled in this repo that talks to MySQL
-  directly (no `mysql` CLI required) — see [Backend](#backend)
+- Queries run through `abcql-backend`, a small Go binary bundled in this repo that talks to the
+  database directly (no `mysql`/`sqlite3` CLI required) — see [Backend](#backend)
 
 ---
 
@@ -85,6 +85,24 @@ return {
   },
 }
 ```
+
+#### SQLite
+
+A SQLite datasource points at a database file instead of a server:
+
+```lua
+datasources = {
+  app = "sqlite://data/app.db",          -- relative to Neovim's working directory
+  archive = "sqlite:///var/lib/app.db",  -- absolute path (note the third slash)
+  scratch = "sqlite://~/scratch.db",     -- ~ is expanded
+},
+```
+
+The file must already exist (a mistyped path would otherwise create an empty database). Foreign
+keys are enforced and a 5 s busy timeout is set; DSN query options are passed to the driver, e.g.
+`sqlite:///app.db?_pragma=journal_mode(WAL)`. The file's tables live in the `main` schema, which is
+what the tree and completion show as the database. Password, keyring and proxy settings don't
+apply. BLOB values are shown as hex (`0xCAFE`).
 
 You can use `:AbcqlConfigInit` to generate a template file, `:AbcqlDatasourceAdd` to add entries
 to it interactively, and `:AbcqlDatasourceUpdate` to edit them later.
@@ -248,7 +266,8 @@ require("abcql").setup({
 ## Backend
 
 Queries are executed by `abcql-backend`, a small Go binary in this repo (`backend/`) that connects to
-MySQL directly via a native driver — no `mysql` CLI dependency. It's built with:
+the database directly via native drivers (`go-sql-driver/mysql`, and the pure-Go `modernc.org/sqlite`,
+so no cgo or SQLite library is needed) — no `mysql`/`sqlite3` CLI dependency. It's built with:
 
 ```sh
 make build
@@ -262,6 +281,7 @@ The binary also works standalone, independent of Neovim:
 ```sh
 echo '{"engine":"mysql","host":"127.0.0.1","port":3306,"user":"root","database":"shop","sql":"select 1"}' \
   | bin/abcql-backend exec
+echo '{"engine":"sqlite","database":"/path/to/app.db","sql":"select 1"}' | bin/abcql-backend exec
 ```
 
 By default, abcql.nvim looks for `bin/abcql-backend` next to the plugin itself. To use a binary built

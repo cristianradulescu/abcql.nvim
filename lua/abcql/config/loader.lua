@@ -74,6 +74,7 @@ return {
   -- default = "dev",
   datasources = {
     -- dev = "mysql://user:password@localhost:3306/database",
+    -- app = "sqlite://data/app.db", -- SQLite file, relative to the working directory (or sqlite:///abs/path.db)
   },
 }
 ]]

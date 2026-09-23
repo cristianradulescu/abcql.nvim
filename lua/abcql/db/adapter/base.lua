@@ -1,4 +1,4 @@
----@alias AdapterConfig { host?: string, port?: number, user?: string, password?: string, database?: string, options?: table<string, string>, proxy?: string }
+---@alias AdapterConfig { host?: string, port?: number, user?: string, password?: string, database?: string, path?: string, options?: table<string, string>, proxy?: string }
 
 ---@class abcql.db.adapter.Adapter
 ---@field config {}
