@@ -42,6 +42,7 @@ function Database.setup(config)
           readonly = ds_config.readonly,
           confirm = ds_config.confirm,
           highlight = ds_config.highlight,
+          auto_limit = ds_config.auto_limit,
         }
       or nil
     local _, err = Database.connectionRegistry:register_datasource(name, dsn, proxy, secret, opts)

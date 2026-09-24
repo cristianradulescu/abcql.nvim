@@ -1,10 +1,11 @@
 local Backend = require("abcql.backend")
+local Limit = require("abcql.db.limit")
 local Statements = require("abcql.db.statements")
 
 ---@class abcql.db.Query
 local Query = {}
 
----@alias QueryResult { headers: string[], rows: table[], row_count: number, query_type: string?, affected_rows: number?, matched_rows: number?, changed_rows: number?, warnings: number?, duration_ms: number?, truncated: boolean? }
+---@alias QueryResult { headers: string[], rows: table[], row_count: number, query_type: string?, affected_rows: number?, matched_rows: number?, changed_rows: number?, warnings: number?, duration_ms: number?, truncated: boolean?, auto_limit: number? }
 
 --- Currently running query, if any
 --- @type { handle: table|nil, query: string, datasource: Datasource, started: number }|nil
@@ -263,11 +264,20 @@ function Query.run(sql, datasource, opts)
     running = job
     UI.set_running(sql, datasource)
 
-    local handle = Query.execute_async(datasource.adapter, sql, function(results, err)
+    -- A statement bounded by a LIMIT (its own or the auto-LIMIT) is returned
+    -- in full; max_rows only caps statements without one.
+    local limit = Limit.for_datasource(datasource)
+    local sent_sql, limit_status = Limit.apply(sql, limit)
+    local exec_opts = limit_status and { max_rows = 0 } or nil
+
+    local handle = Query.execute_async(datasource.adapter, sent_sql, function(results, err)
       if running == job then
         running = nil
       end
       UI.clear_running()
+      if results and limit_status == "added" then
+        results.auto_limit = limit
+      end
 
       History.save(sql, datasource.name, database, results, err)
 
@@ -279,7 +289,7 @@ function Query.run(sql, datasource, opts)
         Query.after_schema_change(sql, datasource)
       end
       finish(results, err)
-    end)
+    end, exec_opts)
 
     -- The callback may already have run (e.g. backend binary missing), in
     -- which case the job is finished and there is nothing to track.

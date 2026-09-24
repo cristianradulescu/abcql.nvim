@@ -74,6 +74,45 @@ function M.is_blank(sql)
   return M.strip_leading_comments(sql):match("^%s*$") ~= nil
 end
 
+--- If a quoted string, backtick identifier or comment starts at position i,
+--- return the position just after it (a `--`/`#` comment ends before its
+--- newline; an unterminated one runs to the end of the text). Returns nil
+--- when position i starts ordinary SQL.
+--- @param text string
+--- @param i number
+--- @return number|nil
+function M.skip_literal(text, i)
+  local len = #text
+  local c = text:sub(i, i)
+  local two = text:sub(i, i + 1)
+  if c == "'" or c == '"' or c == "`" then
+    -- Skip to the matching close, honouring backslash escapes and doubled
+    -- quotes.
+    local quote = c
+    i = i + 1
+    while i <= len do
+      local ch = text:sub(i, i)
+      if ch == "\\" and quote ~= "`" then
+        i = i + 2
+      elseif ch == quote then
+        if text:sub(i + 1, i + 1) ~= quote then
+          return i + 1
+        end
+        i = i + 2
+      else
+        i = i + 1
+      end
+    end
+    return len + 1
+  elseif two == "--" or c == "#" then
+    return text:find("\n", i, true) or (len + 1)
+  elseif two == "/*" then
+    local close = text:find("*/", i + 2, true)
+    return close and (close + 2) or (len + 1)
+  end
+  return nil
+end
+
 --- Split raw SQL text into statements using a character scanner.
 --- @param text string
 --- @return abcql.Statement[]
@@ -108,47 +147,17 @@ function M.scan(text)
 
   while i <= len do
     local c = text:sub(i, i)
-    local two = text:sub(i, i + 1)
+    local stop = M.skip_literal(text, i)
 
     if c == "\n" then
       line = line + 1
       i = i + 1
-    elseif c == "'" or c == '"' or c == "`" then
-      -- Quoted string / identifier: skip to the matching close, honouring
-      -- backslash escapes and doubled quotes.
-      local quote = c
-      i = i + 1
-      while i <= len do
-        local ch = text:sub(i, i)
-        if ch == "\\" and quote ~= "`" then
-          if text:sub(i + 1, i + 1) == "\n" then
-            line = line + 1
-          end
-          i = i + 2
-        elseif ch == quote then
-          if text:sub(i + 1, i + 1) == quote then
-            i = i + 2
-          else
-            i = i + 1
-            break
-          end
-        else
-          if ch == "\n" then
-            line = line + 1
-          end
-          i = i + 1
-        end
-      end
-    elseif two == "--" or c == "#" then
-      local nl = text:find("\n", i, true)
-      i = nl or (len + 1)
-    elseif two == "/*" then
-      local close = text:find("*/", i + 2, true)
-      local stop = close and (close + 1) or len
-      for _ in text:sub(i, stop):gmatch("\n") do
+    elseif stop then
+      -- A line comment ends before its newline, which is counted above.
+      for _ in text:sub(i, stop - 1):gmatch("\n") do
         line = line + 1
       end
-      i = stop + 1
+      i = stop
     elseif c == ";" then
       push(i - 1, line)
       i = i + 1

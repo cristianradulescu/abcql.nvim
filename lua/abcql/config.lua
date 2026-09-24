@@ -10,7 +10,8 @@ local loader = require("abcql.config.loader")
 
 ---@class abcql.Config.Query
 ---@field confirm "always"|"writes"|"never" When to show the confirmation prompt before executing
----@field max_rows number Maximum rows fetched per query (0 disables the cap)
+---@field max_rows number Maximum rows fetched per query without a LIMIT (0 disables the cap)
+---@field auto_limit number|false|nil LIMIT added to plain SELECTs without one (nil: same as max_rows; 0/false disables)
 ---@field auto_attach boolean Attach the last used datasource to new SQL buffers automatically
 ---@field treesitter boolean Use the tree-sitter `sql` parser for statement boundaries when available
 
@@ -48,6 +49,8 @@ local defaults = {
   query = {
     confirm = "writes",
     max_rows = 1000,
+    -- nil follows max_rows
+    auto_limit = nil,
     auto_attach = true,
     treesitter = true,
   },

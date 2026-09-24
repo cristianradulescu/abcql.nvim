@@ -15,6 +15,7 @@ local M = {}
 --- @field readonly? boolean Refuse to run statements that modify data or schema
 --- @field confirm? "always"|"writes"|"never" Per-datasource confirmation policy (overrides query.confirm)
 --- @field highlight? string Highlight group used for this datasource in the winbar
+--- @field auto_limit? number|false LIMIT added to plain SELECTs (overrides query.auto_limit; 0/false disables)
 --- @field source abcql.DatasourceSource Where this datasource was loaded from
 --- @field source_path? string Path to the config file (nil for "config" source)
 
@@ -66,6 +67,7 @@ M.CONFIG_TEMPLATE = [[
 --     readonly = true,             -- refuse INSERT/UPDATE/DELETE/DDL
 --     confirm = "always",          -- "always" | "writes" | "never"
 --     highlight = "DiagnosticError", -- winbar highlight group
+--     auto_limit = 100,            -- LIMIT added to SELECTs without one (false = off)
 --   },
 
 return {
@@ -170,6 +172,7 @@ local function normalize_datasource(value, source, source_path)
     entry.readonly = value.readonly == true or nil
     entry.confirm = value.confirm
     entry.highlight = value.highlight
+    entry.auto_limit = value.auto_limit
   else
     entry.dsn = M.expand_env_vars(value)
   end
@@ -243,7 +246,7 @@ end
 
 --- Get datasource configs with DSN, optional proxy/secret and safety flags
 --- @param loaded_datasources table<string, abcql.LoadedDatasource>
---- @return table<string, { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string }> name -> config mapping
+--- @return table<string, { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false }> name -> config mapping
 function M.get_datasource_configs(loaded_datasources)
   local result = {}
   for name, data in pairs(loaded_datasources) do
@@ -254,6 +257,7 @@ function M.get_datasource_configs(loaded_datasources)
       readonly = data.readonly,
       confirm = data.confirm,
       highlight = data.highlight,
+      auto_limit = data.auto_limit,
     }
   end
   return result
@@ -340,7 +344,7 @@ end
 --- Replace a datasource entry in a config file with a freshly rendered one.
 --- @param path string
 --- @param name string
---- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string }
+--- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false }
 --- @return boolean success
 --- @return string|nil error
 function M.update_datasource_in_file(path, name, entry)
@@ -390,11 +394,16 @@ end
 
 --- Render a datasource entry as Lua source for a config file
 --- @param name string
---- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string }
+--- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false }
 --- @return string
 function M.format_datasource_entry(name, entry)
   local key = name:match("^[%a_][%w_]*$") and name or string.format("[%q]", name)
-  local has_flags = entry.proxy or entry.secret or entry.readonly or entry.confirm or entry.highlight
+  local has_flags = entry.proxy
+    or entry.secret
+    or entry.readonly
+    or entry.confirm
+    or entry.highlight
+    or entry.auto_limit ~= nil
   if not has_flags then
     return string.format("    %s = %q,", key, entry.dsn)
   end
@@ -418,6 +427,9 @@ function M.format_datasource_entry(name, entry)
   if entry.highlight then
     table.insert(lines, string.format("      highlight = %q,", entry.highlight))
   end
+  if entry.auto_limit ~= nil then
+    table.insert(lines, string.format("      auto_limit = %s,", tostring(entry.auto_limit)))
+  end
   table.insert(lines, "    },")
   return table.concat(lines, "\n")
 end
@@ -427,7 +439,7 @@ end
 --- `datasources = {` line so comments and other entries are preserved.
 --- @param path string Config file path
 --- @param name string Datasource name
---- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string }
+--- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false }
 --- @return boolean success
 --- @return string|nil error
 function M.add_datasource_to_file(path, name, entry)

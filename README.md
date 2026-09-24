@@ -137,13 +137,14 @@ opens the picker. The attached datasource is shown in the buffer's winbar.
 
 #### Safety Flags
 
-Table-style datasources accept three optional flags:
+Table-style datasources accept these optional flags:
 
 | Flag        | Values                          | Effect                                                                 |
 |-------------|---------------------------------|------------------------------------------------------------------------|
 | `readonly`  | `true`                          | Refuses INSERT/UPDATE/DELETE/DDL; shown as `[readonly]` in the winbar  |
 | `confirm`   | `"always"`, `"writes"`, `"never"` | Overrides the global `query.confirm` policy for this datasource       |
 | `highlight` | a highlight group name          | Colors the datasource name in the winbar (e.g. `"DiagnosticError"`)   |
+| `auto_limit`| a number, or `false`            | Overrides `query.auto_limit` for this datasource (see [Row limits](#row-limits)) |
 
 ```lua
 prod = {
@@ -254,7 +255,8 @@ require("abcql").setup({
   },
   query = {
     confirm = "writes",     -- "always" | "writes" | "never": when to show the confirmation prompt
-    max_rows = 1000,        -- rows fetched per query (0 = unlimited); the footer says when capped
+    max_rows = 1000,        -- rows fetched for a statement without a LIMIT (0 = unlimited)
+    auto_limit = nil,       -- LIMIT added to SELECTs without one; nil = max_rows, 0/false = off
     auto_attach = true,     -- reuse the last picked datasource for new SQL buffers
     treesitter = true,      -- use the tree-sitter sql parser for statement boundaries if installed
   },
@@ -355,8 +357,26 @@ backend process and records the attempt in history.
 ### Results Panel
 
 The winbar above the results shows the datasource/database, the statement, and the row count and
-duration. Result sets are capped at `query.max_rows`; the footer reads `showing first 1,000 rows
-(max_rows limit)` when the cap was hit.
+duration.
+
+#### Row limits
+
+A top-level `SELECT` (also `WITH ... SELECT` and a `UNION`) without a `LIMIT` of its own is sent
+with `LIMIT n` appended, so the server stops after `n` rows. The SQL in your buffer and in history
+stays as you wrote it; the footer and winbar show `auto LIMIT 1000` when a limit was added
+(highlighted when the result reached it, i.e. may be partial). The LIMIT is placed before a
+trailing `;`/comment and before `FOR UPDATE`/`FOR SHARE`/`LOCK IN SHARE MODE`.
+
+- `n` is the datasource's `auto_limit`, else `query.auto_limit`, else `query.max_rows` (1000 by
+  default), so a single `max_rows` setting covers both unless you set them apart. `0`/`false`
+  turns the auto-LIMIT off.
+- A statement with its own top-level `LIMIT` (including `LIMIT n OFFSET m` and `LIMIT m, n`) is
+  never changed or capped: `SELECT * FROM titles LIMIT 1000000` returns up to a million rows.
+  Writing a LIMIT is also how to get more rows than the default for one query.
+- A `LIMIT` inside a subquery, derived table, CTE body or parenthesised UNION branch doesn't count.
+- Everything else (SHOW, EXPLAIN, CALL, `SELECT ... INTO`, a selection holding several statements,
+  anything that isn't clearly a plain SELECT) is sent unchanged and capped by `query.max_rows`
+  instead; the footer then reads `showing first 1,000 rows (max_rows limit)` when the cap was hit.
 
 | Key             | Action                                                |
 |-----------------|-------------------------------------------------------|

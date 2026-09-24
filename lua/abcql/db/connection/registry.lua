@@ -2,8 +2,9 @@
 ---@field readonly? boolean Refuse statements that modify data or schema
 ---@field confirm? "always"|"writes"|"never" Per-datasource confirmation policy
 ---@field highlight? string Highlight group for the winbar label
+---@field auto_limit? number|false LIMIT added to plain SELECTs (overrides query.auto_limit; 0/false disables)
 
----@alias Datasource { name: string, dsn: string, adapter?: abcql.db.adapter.Adapter, readonly: boolean, confirm?: string, highlight?: string }
+---@alias Datasource { name: string, dsn: string, adapter?: abcql.db.adapter.Adapter, readonly: boolean, confirm?: string, highlight?: string, auto_limit?: number|false }
 
 ---@class abcql.db.connection.Registry
 ---@field private adapters table<string, abcql.db.adapter.Adapter> Registered adapter classes by scheme
@@ -55,7 +56,7 @@ end
 --- @param dsn string The data source name (DSN) string
 --- @param proxy? string SOCKS proxy URL (e.g., "socks5://localhost:1080")
 --- @param secret? table Secret reference for keyring lookup
---- @param opts? DatasourceOpts Safety flags (readonly / confirm / highlight)
+--- @param opts? DatasourceOpts Safety flags (readonly / confirm / highlight / auto_limit)
 --- @return Datasource|nil The registered data source if successful, nil otherwise
 --- @return string|nil Error message if registration failed
 function Registry:register_datasource(name, dsn, proxy, secret, opts)
@@ -101,6 +102,7 @@ function Registry:register_datasource(name, dsn, proxy, secret, opts)
     readonly = opts.readonly == true,
     confirm = opts.confirm,
     highlight = opts.highlight,
+    auto_limit = opts.auto_limit,
   }
 
   self.datasources = vim.tbl_extend("force", self.datasources, { [name] = datasource })

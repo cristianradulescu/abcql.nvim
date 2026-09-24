@@ -79,6 +79,17 @@ temp file.
 
 The request also carries `max_rows` (from `query.max_rows`, default 1000); the backend stops
 scanning after that many rows and sets `truncated: true`, which the results footer/winbar surface.
+`Query.run` passes each statement through `abcql.db.limit` (auto-LIMIT): a plain top-level
+SELECT / `WITH ... SELECT` / UNION without a LIMIT gets `LIMIT n` in the *sent* SQL, placed right
+after the last real token — so before a trailing `;`/comment, and before a FOR UPDATE/FOR SHARE/
+LOCK IN SHARE MODE clause and any comment in front of it (`n` = datasource `auto_limit` >
+`query.auto_limit` > `query.max_rows`; `0`/`false` disables). Whenever the statement ends up with
+a top-level LIMIT — the user's own or the added one — `max_rows` is sent as `0`, so an explicit
+LIMIT is never lowered; `max_rows` only caps statements the rewrite leaves alone (SHOW, CALL,
+SELECT ... INTO, anything not confidently a plain SELECT). Top-level detection reuses
+`Statements.skip_literal` (the quote/comment skipping shared with `Statements.scan`). The buffer
+and history keep the original SQL; `results.auto_limit` drives the `auto LIMIT N` footer/winbar
+hint.
 `Backend.invoke` returns the `vim.system` handle so `abcql.db.query.cancel` can kill a running
 query (reported back as the error string `Query cancelled`).
 
@@ -112,13 +123,13 @@ Datasources merge from three sources, later wins: `setup()` opts → `~/.config/
 (user) → `.abcql.lua` in cwd (local/project, highest priority). `abcql.config.loader` does the
 merging and tags each datasource with `source`/`source_path` for `:AbcqlDatasourceList`. DSN and
 proxy strings support `${VAR_NAME}` env expansion. Table-style datasources may also carry
-`readonly`/`confirm`/`highlight` flags, which travel through the loader and
+`readonly`/`confirm`/`highlight`/`auto_limit` flags, which travel through the loader and
 `registry:register_datasource(name, dsn, proxy, secret, opts)` onto the `Datasource` object; each
 config file (and `setup()`) may name a `default` datasource, same precedence. `setup()` also has
-`ui` (panel sizes, icons, cell width) and `query` (confirm policy, `max_rows`, `auto_attach`,
-`treesitter`) sections; modules read them via `require("abcql.config").ui/.query` with local
-fallbacks so they still work when config was never set up (tests). `:AbcqlDatasourceAdd` /
-`:AbcqlDatasourceUpdate` edit config files textually: `loader.add_datasource_to_file` inserts an
+`ui` (panel sizes, icons, cell width) and `query` (confirm policy, `max_rows`, `auto_limit`,
+`auto_attach`, `treesitter`) sections; modules read them via `require("abcql.config").ui/.query`
+with local fallbacks so they still work when config was never set up (tests).
+`:AbcqlDatasourceAdd` / `:AbcqlDatasourceUpdate` edit config files textually: `loader.add_datasource_to_file` inserts an
 entry right after the `datasources = {` line and `loader.update_datasource_in_file` replaces the
 brace-matched line range found by `find_datasource_entry`, so comments and sibling entries survive;
 both re-trust the file for `vim.secure.read`. The prompt flows live in `abcql.config.editor`
@@ -196,7 +207,8 @@ first keyword isn't SELECT/SHOW/DESCRIBE/EXPLAIN/WITH/USE...). `abcql.db.query` 
 points, `execute_query_at_cursor`, `execute_selection` and `execute_buffer` (sequential, stops on
 first error), all of which go through `Database.ensure_datasource` and then `Query.run`. `Query.run`
 is the single execution path: readonly guard → confirmation float (policy: datasource `confirm` >
-`query.confirm`, default only for writes) → `UI.set_running` (winbar timer) → `Backend.invoke`
+`query.confirm`, default only for writes) → `UI.set_running` (winbar timer) → auto-LIMIT rewrite →
+`Backend.invoke`
 (handle kept for `Query.cancel`) → `abcql.history` save → `UI.display`. Results are rendered by
 `abcql.ui.display` (error strings, `write`-type results, and `select`-type tables). History
 navigation (`<C-o>`/`<C-i>`/`[h`/`]h` in the results buffer, or `:AbcqlHistoryBack`/`Forward`)

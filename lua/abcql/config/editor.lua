@@ -263,6 +263,7 @@ function M.read_entry(path, name)
     readonly = raw.readonly == true or nil,
     confirm = raw.confirm,
     highlight = raw.highlight,
+    auto_limit = raw.auto_limit,
   },
     nil
 end

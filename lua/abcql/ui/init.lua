@@ -1211,6 +1211,11 @@ function UI.display(results, results_title, opts)
   else
     table.insert(footer_parts, format.format_row_count(#rows))
   end
+  -- The statement was sent with an added LIMIT: at that count the result may be partial.
+  local limit_hit = results.auto_limit ~= nil and #rows >= results.auto_limit
+  if results.auto_limit then
+    table.insert(footer_parts, string.format("auto LIMIT %d", results.auto_limit))
+  end
   if results.duration_ms then
     table.insert(footer_parts, format_duration(results.duration_ms))
   end
@@ -1230,7 +1235,8 @@ function UI.display(results, results_title, opts)
     highlights.apply_footer_highlight(buf, i)
   end
 
-  set_results_winbar(build_results_winbar(opts, summary, results.truncated and "AbcqlTruncated" or "AbcqlFooter"))
+  local summary_hl = (results.truncated or limit_hit) and "AbcqlTruncated" or "AbcqlFooter"
+  set_results_winbar(build_results_winbar(opts, summary, summary_hl))
 end
 
 --- Get the current query results (for export functionality)

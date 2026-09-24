@@ -96,6 +96,13 @@ describe("UI", function()
       assert.is_not_nil(lines[#lines]:find("showing first 1 row", 1, true))
     end)
 
+    it("shows an added LIMIT in the footer", function()
+      UI.open()
+      UI.display({ headers = { "id" }, rows = { { "1" } }, row_count = 1, auto_limit = 1000 })
+      local lines = results_lines()
+      assert.are.equal(" 1 row • auto LIMIT 1000", lines[#lines])
+    end)
+
     it("shows the datasource, query and summary in the results winbar", function()
       UI.open()
       local ds = require("abcql.db").connectionRegistry:get_datasource("dev")
