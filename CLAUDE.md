@@ -123,13 +123,14 @@ Datasources merge from three sources, later wins: `setup()` opts → `~/.config/
 (user) → `.abcql.lua` in cwd (local/project, highest priority). `abcql.config.loader` does the
 merging and tags each datasource with `source`/`source_path` for `:AbcqlDatasourceList`. DSN and
 proxy strings support `${VAR_NAME}` env expansion. Table-style datasources may also carry
-`readonly`/`confirm`/`highlight`/`auto_limit` flags, which travel through the loader and
+`readonly`/`confirm`/`highlight`/`auto_limit`/`lint_dangerous` flags, which travel through the loader and
 `registry:register_datasource(name, dsn, proxy, secret, opts)` onto the `Datasource` object; each
 config file (and `setup()`) may name a `default` datasource, same precedence. `setup()` also has
 `ui` (panel sizes, icons, cell width) and `query` (confirm policy, `max_rows`, `auto_limit`,
-`auto_attach`, `treesitter`) sections; modules read them via `require("abcql.config").ui/.query`
-with local fallbacks so they still work when config was never set up (tests).
-`:AbcqlDatasourceAdd` / `:AbcqlDatasourceUpdate` edit config files textually: `loader.add_datasource_to_file` inserts an
+`auto_attach`, `treesitter`, `lint_dangerous`) sections; modules read them via
+`require("abcql.config").ui/.query` with local fallbacks so they still work when config was never
+set up (tests). `:AbcqlDatasourceAdd` / `:AbcqlDatasourceUpdate` edit config files textually:
+`loader.add_datasource_to_file` inserts an
 entry right after the `datasources = {` line and `loader.update_datasource_in_file` replaces the
 brace-matched line range found by `find_datasource_entry`, so comments and sibling entries survive;
 both re-trust the file for `vim.secure.read`. The prompt flows live in `abcql.config.editor`
@@ -170,8 +171,10 @@ suggestions come from `Server:join_conditions` (foreign keys grouped by constrai
 direction, then same-name/same-type columns) applied to `Parser.last_joined_table` after `ON`, or
 to every FK-linked table after `JOIN` (`Server:join_table_suggestions`, alias generated from the
 table's initials and de-duplicated against the statement). Diagnostics (unknown tables,
-skipping CTE names and CREATE statements) are pushed with `publishDiagnostics` from a debounced
-timer on `didOpen`/`didChange`.
+skipping CTE names and CREATE statements; plus a WARNING from `Server:dangerous_diagnostics` on
+dangerous statements, positioned from the statement's `start_col` + `pos`, which works without
+the schema cache) are pushed with `publishDiagnostics` from a debounced timer on
+`didOpen`/`didChange`.
 
 ### UI state machine
 
@@ -202,12 +205,27 @@ subtree and refetches, `Tree.reset()` drops everything (called from `:AbcqlDatas
 `abcql.db.statements` splits buffer text into statements: a character scanner that understands
 quotes, backtick identifiers and `--`/`#`/`/* */` comments (so `;` inside those never splits, and
 several statements may share a line), with a tree-sitter `sql` pass tried first when the parser is
-installed and the tree has no errors. It also classifies statements (`is_write`: anything whose
-first keyword isn't SELECT/SHOW/DESCRIBE/EXPLAIN/WITH/USE...). `abcql.db.query` has three entry
-points, `execute_query_at_cursor`, `execute_selection` and `execute_buffer` (sequential, stops on
-first error), all of which go through `Database.ensure_datasource` and then `Query.run`. `Query.run`
-is the single execution path: readonly guard → confirmation float (policy: datasource `confirm` >
-`query.confirm`, default only for writes) → `UI.set_running` (winbar timer) → auto-LIMIT rewrite →
+installed and the tree has no errors (it slices by node columns, so statements may share a line
+there too). Each `abcql.Statement` carries `start_col` (0-based byte column of its first token,
+after leading comments) next to its line range. It also classifies statements (`is_write`:
+anything whose first keyword isn't SELECT/SHOW/DESCRIBE/EXPLAIN/WITH/USE...) and flags dangerous
+ones: `Statements.dangerous(sql)` walks top-level tokens (paren depth 0, quotes/comments skipped
+by `Statements.skip_literal`, shared with `scan` and `abcql.db.limit`) and returns `{keyword, table, pos, message}`
+for UPDATE/DELETE with no WHERE (also after WITH, and with a LIMIT, worded "up to N [arbitrary]
+rows"), a literal `WHERE 1`/`1=1`/`TRUE`, or TRUNCATE. Not flagged: DROP, and multi-table
+UPDATE/DELETE restricted by an inner JOIN with ON/USING (`has_inner_join`; comma, CROSS,
+LEFT/RIGHT joins and a JOIN without ON/USING are still flagged). Detection is conservative
+(unsure → not flagged). The switch is datasource `lint_dangerous` > `query.lint_dangerous`
+(default on), via `Query.lint_dangerous_enabled`. `abcql.db.query` has three entry points,
+`execute_query_at_cursor`, `execute_selection` and `execute_buffer` (sequential, stops on first
+error; when any statement is dangerous it shows one upfront prompt listing them — whatever the
+policy, replacing the batch prompt — and runs the batch with `dangerous_confirmed = true`, so
+declining runs nothing), all of which go through `Database.ensure_datasource` and then
+`Query.run`. `Query.run` is the single execution path: readonly guard → confirmation float (policy: datasource `confirm` >
+`query.confirm`, default only for writes; a dangerous statement always gets the float, with the
+reason in its title, whatever the policy or `opts.confirm`, unless `opts.dangerous_confirmed`;
+`execute_selection` sends the whole selection through one `Query.run`, which checks every
+statement in it before anything runs) → `UI.set_running` (winbar timer) → auto-LIMIT rewrite →
 `Backend.invoke`
 (handle kept for `Query.cancel`) → `abcql.history` save → `UI.display`. Results are rendered by
 `abcql.ui.display` (error strings, `write`-type results, and `select`-type tables). History

@@ -375,5 +375,45 @@ describe("LSP Server", function()
       assert.are.equal(uri, published.uri)
       assert.are.equal(1, #published.diagnostics)
     end)
+
+    it("warns about UPDATE/DELETE without WHERE at the keyword", function()
+      set_lines({
+        "SELECT 1; delete from Employees;",
+        "UPDATE Employees SET first_name = 'x' WHERE emp_no = 1;",
+        "WITH x AS (SELECT 1)",
+        "  UPDATE Employees SET first_name = 'y';",
+      })
+      local diagnostics = server:compute_diagnostics(buf)
+      assert.are.equal(2, #diagnostics)
+      assert.are.same({ line = 0, character = 10 }, diagnostics[1].range.start)
+      assert.are.same({ line = 0, character = 16 }, diagnostics[1].range["end"])
+      assert.are.equal("DELETE without WHERE affects every row in Employees", diagnostics[1].message)
+      assert.are.same({ line = 3, character = 2 }, diagnostics[2].range.start)
+    end)
+
+    for _, treesitter in ipairs({ true, false }) do
+      it(
+        "underlines the dangerous statement, not an earlier match (treesitter=" .. tostring(treesitter) .. ")",
+        function()
+          require("abcql.config").setup({ query = { treesitter = treesitter } })
+          set_lines({
+            "DELETE FROM Employees WHERE emp_no=1; DELETE FROM Employees;",
+            "/* DELETE FROM x */ DELETE FROM x;",
+          })
+          local diagnostics = server:dangerous_diagnostics(buf)
+          assert.are.equal(2, #diagnostics)
+          assert.are.same({ line = 0, character = 38 }, diagnostics[1].range.start)
+          assert.are.same({ line = 1, character = 20 }, diagnostics[2].range.start)
+        end
+      )
+    end
+
+    it("warns without a schema cache and honours lint_dangerous = false", function()
+      set_lines({ "TRUNCATE TABLE logs;" })
+      local bare = Server.new(Cache.new(), "other", {})
+      assert.are.equal(1, #bare:compute_diagnostics(buf))
+      require("abcql.config").setup({ query = { lint_dangerous = false } })
+      assert.are.same({}, bare:compute_diagnostics(buf))
+    end)
   end)
 end)

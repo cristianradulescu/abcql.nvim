@@ -224,6 +224,156 @@ describe("Query", function()
     end)
   end)
 
+  describe("dangerous statements", function()
+    local invoked, ui
+
+    before_each(function()
+      invoked = nil
+      ui = {
+        display = function() end,
+        set_running = function() end,
+        clear_running = function() end,
+      }
+      package.loaded["abcql.ui"] = ui
+      package.loaded["abcql.history"] = { save = function() end }
+      package.loaded["abcql.backend"] = {
+        invoke = function(request, callback)
+          invoked = request.sql
+          callback({ query_type = "write", affected_rows = 3 }, nil)
+          return {}
+        end,
+      }
+      package.loaded["abcql.db.query"] = nil
+      Query = require("abcql.db.query")
+    end)
+
+    after_each(function()
+      package.loaded["abcql.ui"] = nil
+      package.loaded["abcql.history"] = nil
+      package.loaded["abcql.backend"] = nil
+    end)
+
+    describe("in a buffer run", function()
+      local ran, buf
+
+      local function floating()
+        return vim.api.nvim_win_get_config(vim.api.nvim_get_current_win()).relative ~= ""
+      end
+
+      local function run_buffer(policy)
+        require("abcql.config").setup({ query = { confirm = policy } })
+        local ds = {
+          name = "dev",
+          adapter = {
+            build_backend_request = function(_, sql)
+              return { sql = sql }
+            end,
+          },
+        }
+        package.loaded["abcql.db"] = {
+          ensure_datasource = function(_, callback)
+            callback(ds)
+          end,
+        }
+        ran = {}
+        package.loaded["abcql.backend"].invoke = function(request, callback)
+          table.insert(ran, request.sql)
+          callback({ query_type = "write", affected_rows = 1 }, nil)
+          return {}
+        end
+        buf = vim.api.nvim_create_buf(false, true)
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+          "INSERT INTO a VALUES (1);",
+          "UPDATE b SET x = 1;",
+          "DELETE FROM c WHERE id = 1;",
+        })
+        vim.api.nvim_set_current_buf(buf)
+        Query.execute_buffer()
+      end
+
+      after_each(function()
+        package.loaded["abcql.db"] = nil
+        if floating() then
+          vim.api.nvim_win_close(0, true)
+        end
+        vim.api.nvim_buf_delete(buf, { force = true })
+      end)
+
+      it("confirms dangerous statements upfront, even with policy never, and declining runs nothing", function()
+        run_buffer("never")
+        assert.is_true(floating())
+        local title = vim.api.nvim_win_get_config(0).title[1][1]
+        assert.is_not_nil(title:find("1 dangerous", 1, true))
+        local body = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+        assert.is_not_nil(body:find("line 2: UPDATE without WHERE affects every row in b", 1, true))
+        assert.are.same({}, ran)
+
+        vim.api.nvim_feedkeys("q", "x", false)
+        assert.is_false(floating())
+        assert.are.same({}, ran)
+      end)
+
+      it("asks once with the writes policy and runs the whole batch after accepting", function()
+        run_buffer("writes")
+        assert.is_true(floating())
+        assert.are.same({}, ran)
+
+        vim.api.nvim_feedkeys(vim.keycode("<CR>"), "x", false)
+        assert.is_false(floating())
+        assert.are.same({ "INSERT INTO a VALUES (1)", "UPDATE b SET x = 1", "DELETE FROM c WHERE id = 1" }, ran)
+      end)
+    end)
+
+    it("forces the confirmation float even with confirm policy never", function()
+      require("abcql.config").setup({ query = { confirm = "never" } })
+      local ds = {
+        name = "scratch",
+        confirm = "never",
+        adapter = {
+          build_backend_request = function(_, sql)
+            return { sql = sql }
+          end,
+        },
+      }
+      local prev_win = vim.api.nvim_get_current_win()
+      Query.run("select 1; delete from orders", ds, { confirm = false })
+
+      local win = vim.api.nvim_get_current_win()
+      assert.are_not.equal(prev_win, win)
+      local title = vim.api.nvim_win_get_config(win).title[1][1]
+      assert.is_not_nil(title:find("DELETE without WHERE affects every row in orders", 1, true))
+      assert.is_nil(invoked)
+
+      vim.api.nvim_feedkeys(vim.keycode("<CR>"), "x", false)
+      assert.are.equal("select 1; delete from orders", invoked)
+    end)
+
+    it("runs without a prompt when the datasource disables the lint", function()
+      local ds = {
+        name = "scratch",
+        lint_dangerous = false,
+        adapter = {
+          build_backend_request = function(_, sql)
+            return { sql = sql }
+          end,
+        },
+      }
+      Query.run("truncate logs", ds, { confirm = false })
+      assert.are.equal("truncate logs", invoked)
+    end)
+
+    it("keeps the readonly guard first", function()
+      local err
+      Query.run("delete from orders", { name = "prod", readonly = true }, {
+        on_done = function(_, e)
+          err = e
+        end,
+      })
+      assert.is_not_nil(err:find("readonly", 1, true))
+      assert.is_nil(invoked)
+    end)
+  end)
+
   describe("cancel", function()
     it("returns false when nothing is running", function()
       assert.is_false(Query.cancel())

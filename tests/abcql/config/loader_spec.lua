@@ -472,4 +472,32 @@ describe("Config Loader add_datasource_to_file", function()
     assert.is_false(ok)
     assert.is_not_nil(err:find("datasources = {", 1, true))
   end)
+
+  describe("format_datasource_entry", function()
+    it("writes only well-typed flags", function()
+      local text = Loader.format_datasource_entry("dev", {
+        dsn = "mysql://u@h/db",
+        readonly = "no",
+        confirm = true,
+        highlight = 1,
+        lint_dangerous = "no",
+      })
+      assert.are.equal('    dev = "mysql://u@h/db",', text)
+    end)
+
+    it("writes booleans bare and strings quoted", function()
+      local text = Loader.format_datasource_entry("dev", {
+        dsn = "mysql://u@h/db",
+        readonly = true,
+        confirm = "never",
+        highlight = "Error Msg",
+        lint_dangerous = false,
+      })
+      local chunk = assert(loadstring("return {" .. text .. "}"))()
+      assert.are.same(
+        { dsn = "mysql://u@h/db", readonly = true, confirm = "never", highlight = "Error Msg", lint_dangerous = false },
+        chunk.dev
+      )
+    end)
+  end)
 end)

@@ -14,6 +14,7 @@ local loader = require("abcql.config.loader")
 ---@field auto_limit number|false|nil LIMIT added to plain SELECTs without one (nil: same as max_rows; 0/false disables)
 ---@field auto_attach boolean Attach the last used datasource to new SQL buffers automatically
 ---@field treesitter boolean Use the tree-sitter `sql` parser for statement boundaries when available
+---@field lint_dangerous boolean Warn about and always confirm UPDATE/DELETE without WHERE and TRUNCATE
 
 ---@class abcql.Config
 ---@field datasources table<string, string|table>
@@ -53,6 +54,7 @@ local defaults = {
     auto_limit = nil,
     auto_attach = true,
     treesitter = true,
+    lint_dangerous = true,
   },
 }
 

@@ -43,6 +43,7 @@ function Database.setup(config)
           confirm = ds_config.confirm,
           highlight = ds_config.highlight,
           auto_limit = ds_config.auto_limit,
+          lint_dangerous = ds_config.lint_dangerous,
         }
       or nil
     local _, err = Database.connectionRegistry:register_datasource(name, dsn, proxy, secret, opts)

@@ -16,6 +16,8 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
   `-- abcql: <name>` overrides so `.sql` files attach themselves
 - Run the statement under the cursor, a visual selection, or a whole file; cancel long queries
 - Confirmation prompts only for statements that write (configurable), `readonly` datasources
+- Dangerous-statement lint: UPDATE/DELETE without WHERE and TRUNCATE get a warning while editing
+  and always ask for confirmation before running
 - Results panel with cell popup/yank, cell motions, row cap, and a context winbar
   (datasource, statement, row count, duration)
 - Schema and table explorer (toggle with `<leader>ST`; hidden by default) with reload, filter,
@@ -145,6 +147,7 @@ Table-style datasources accept these optional flags:
 | `confirm`   | `"always"`, `"writes"`, `"never"` | Overrides the global `query.confirm` policy for this datasource       |
 | `highlight` | a highlight group name          | Colors the datasource name in the winbar (e.g. `"DiagnosticError"`)   |
 | `auto_limit`| a number, or `false`            | Overrides `query.auto_limit` for this datasource (see [Row limits](#row-limits)) |
+| `lint_dangerous` | `true`, `false`            | Overrides the global `query.lint_dangerous` switch for this datasource |
 
 ```lua
 prod = {
@@ -259,6 +262,7 @@ require("abcql").setup({
     auto_limit = nil,       -- LIMIT added to SELECTs without one; nil = max_rows, 0/false = off
     auto_attach = true,     -- reuse the last picked datasource for new SQL buffers
     treesitter = true,      -- use the tree-sitter sql parser for statement boundaries if installed
+    lint_dangerous = true,  -- warn about and always confirm UPDATE/DELETE without WHERE and TRUNCATE
   },
 })
 ```
@@ -350,6 +354,20 @@ tree-sitter `sql` parser is installed it is used instead whenever it parses the 
 A confirmation float appears only for statements that write (INSERT/UPDATE/DELETE/DDL...) unless
 `query.confirm` or the datasource's `confirm` flag says otherwise. `<CR>` runs, `q`/`<Esc>` cancels.
 Running a whole buffer confirms once for the batch and stops at the first error.
+
+Statements that affect every row of a table are always confirmed, whatever the `confirm` policy
+(`never` included), with the reason in the float's title (e.g. `DELETE without WHERE affects every
+row in orders`), and are flagged with a warning diagnostic while editing. That covers UPDATE/DELETE
+with no top-level WHERE (a WHERE inside a subquery, CTE body, string or comment doesn't count; a
+leading WITH is handled), a literal `WHERE 1`, `WHERE 1=1` or `WHERE TRUE`, and TRUNCATE. A LIMIT
+without WHERE is still flagged, worded as `affects up to 5 arbitrary rows`. Multi-table statements
+whose target has an inner join with `ON`/`USING` (`JOIN`, `INNER JOIN`, `STRAIGHT_JOIN`) are not
+flagged, since the join already restricts the rows; comma, `CROSS`, `LEFT`/`RIGHT` joins and joins
+without a condition still are. DROP is not flagged. In a buffer run, they are
+listed (with their line numbers) in a single confirmation shown before anything runs, which
+replaces the usual batch prompt; declining runs nothing. The readonly
+guard still applies first. Turn it off with `query.lint_dangerous = false` or per datasource with
+`lint_dangerous = false`.
 
 While a query runs the results winbar shows `running… 1.2s (<C-c> cancel)`. Cancelling kills the
 backend process and records the attempt in history.
@@ -446,7 +464,7 @@ and files with many statements all behave.
 | Document symbols (`gO`, symbol pickers) | One symbol per statement, named by its first keyword and tables |
 | Workspace symbols (`vim.lsp.buf.workspace_symbol`) | Fuzzy lookup of tables and columns of the datasource |
 | Code actions | Run this statement, browse the table under the cursor, expand `SELECT *` to the column list, insert an INSERT template for the table under the cursor |
-| Diagnostics | Tables that do not exist in the datasource are flagged as warnings (CTE names and `CREATE` statements are ignored) |
+| Diagnostics | Tables that do not exist in the datasource are flagged as warnings (CTE names and `CREATE` statements are ignored), as are UPDATE/DELETE without WHERE and TRUNCATE (see `query.lint_dangerous`) |
 
 The schema is loaded once per datasource with one query per database and shared by every buffer
 attached to it; `:AbcqlSchemaRefresh` reloads it, and a successful `CREATE`/`ALTER`/`DROP`/`RENAME`

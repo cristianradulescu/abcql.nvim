@@ -264,6 +264,7 @@ function M.read_entry(path, name)
     confirm = raw.confirm,
     highlight = raw.highlight,
     auto_limit = raw.auto_limit,
+    lint_dangerous = raw.lint_dangerous,
   },
     nil
 end

@@ -756,15 +756,58 @@ function Server:handle_code_action(params)
   return actions
 end
 
---- Diagnostics for tables that do not exist in the cached schema
+--- Warnings for statements that affect every row (UPDATE/DELETE without
+--- WHERE, TRUNCATE), unless the lint is disabled for this datasource.
+---@param bufnr number
+---@return table[] LSP diagnostics
+function Server:dangerous_diagnostics(bufnr)
+  local Query = require("abcql.db.query")
+  local ok, Database = pcall(require, "abcql.db")
+  local datasource = ok
+    and Database.connectionRegistry
+    and Database.connectionRegistry:get_datasource(self.datasource_name)
+  if not Query.lint_dangerous_enabled(datasource) then
+    return {}
+  end
+  local diagnostics = {}
+  for _, stmt in ipairs(buffer_statements(bufnr)) do
+    local danger = Statements.dangerous(stmt.text)
+    if danger then
+      -- Map the keyword's offset in the statement text to a buffer position.
+      local before = stmt.text:sub(1, danger.pos - 1)
+      local _, newlines = before:gsub("\n", "")
+      local col = #before:match("[^\n]*$")
+      if newlines == 0 then
+        col = col + (stmt.start_col or 0)
+      end
+      local line = stmt.start_line - 1 + newlines
+      table.insert(diagnostics, {
+        range = {
+          start = { line = line, character = col },
+          ["end"] = { line = line, character = col + #danger.keyword },
+        },
+        severity = DiagnosticSeverity.Warning,
+        source = "abcql",
+        message = danger.message,
+      })
+    end
+  end
+  return diagnostics
+end
+
+--- Diagnostics for dangerous statements and for tables that do not exist in
+--- the cached schema
 ---@param bufnr number
 ---@return table[] LSP diagnostics
 function Server:compute_diagnostics(bufnr)
-  if not self.cache:has_cache(self.datasource_name) or not vim.api.nvim_buf_is_valid(bufnr) then
+  if not vim.api.nvim_buf_is_valid(bufnr) then
     return {}
   end
+  local diagnostics = self:dangerous_diagnostics(bufnr)
+  if not self.cache:has_cache(self.datasource_name) then
+    return diagnostics
+  end
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local diagnostics = {}
   for _, stmt in ipairs(buffer_statements(bufnr)) do
     local keyword = Statements.first_keyword(stmt.text)
     if not (keyword and DEFINING_KEYWORDS[keyword]) then

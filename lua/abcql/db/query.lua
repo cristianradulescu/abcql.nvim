@@ -133,6 +133,31 @@ function Query.should_confirm(datasource, sql)
   return Statements.is_write(sql)
 end
 
+--- Whether the dangerous-statement lint is on for a datasource: the
+--- datasource's `lint_dangerous` flag overrides `query.lint_dangerous`.
+--- @param datasource Datasource|nil
+--- @return boolean
+function Query.lint_dangerous_enabled(datasource)
+  if datasource and datasource.lint_dangerous ~= nil then
+    return datasource.lint_dangerous ~= false
+  end
+  local ok, config = pcall(require, "abcql.config")
+  return not (ok and type(config.query) == "table" and config.query.lint_dangerous == false)
+end
+
+--- First statement in `sql` that affects every row (see Statements.dangerous)
+--- @param sql string One or more statements
+--- @return abcql.DangerousStatement|nil
+function Query.find_dangerous(sql)
+  for _, stmt in ipairs(Statements.scan(sql)) do
+    local danger = Statements.dangerous(stmt.text)
+    if danger then
+      return danger
+    end
+  end
+  return nil
+end
+
 --- Show a statement preview in a floating window and prompt for execution
 --- @param query string The SQL to preview
 --- @param title string Window title
@@ -227,7 +252,10 @@ end
 --- running indicator, history and results display.
 --- @param sql string
 --- @param datasource Datasource
---- @param opts? { confirm?: boolean, on_done?: fun(results: QueryResult|nil, err: string|nil) }
+--- A dangerous statement (UPDATE/DELETE without WHERE, TRUNCATE) is always
+--- confirmed, even with `opts.confirm = false`, unless the lint is disabled.
+--- `opts.dangerous_confirmed` means the caller already confirmed it (a buffer run's upfront prompt).
+--- @param opts? { confirm?: boolean, dangerous_confirmed?: boolean, on_done?: fun(results: QueryResult|nil, err: string|nil) }
 function Query.run(sql, datasource, opts)
   opts = opts or {}
   local UI = require("abcql.ui")
@@ -298,14 +326,23 @@ function Query.run(sql, datasource, opts)
     end
   end
 
+  -- A statement touching every row is confirmed whatever the policy says.
+  local danger = not opts.dangerous_confirmed and Query.lint_dangerous_enabled(datasource) and Query.find_dangerous(sql)
+    or nil
   local needs_confirm = opts.confirm
   if needs_confirm == nil then
     needs_confirm = Query.should_confirm(datasource, sql)
   end
 
-  if needs_confirm then
-    local kind = Statements.is_write(sql) and "Run write statement" or "Run query"
-    show_confirmation_prompt(sql, string.format("%s on %s?", kind, datasource.name), execute, function()
+  if needs_confirm or danger then
+    local title
+    if danger then
+      title = string.format("%s — run on %s?", danger.message, datasource.name)
+    else
+      local kind = Statements.is_write(sql) and "Run write statement" or "Run query"
+      title = string.format("%s on %s?", kind, datasource.name)
+    end
+    show_confirmation_prompt(sql, title, execute, function()
       finish(nil, "cancelled")
     end)
   else
@@ -408,6 +445,18 @@ function Query.execute_buffer()
       return
     end
 
+    -- Dangerous statements are confirmed once, before anything runs, so a
+    -- declined prompt never leaves a half-executed batch.
+    local dangers = {}
+    if Query.lint_dangerous_enabled(datasource) then
+      for _, stmt in ipairs(statements) do
+        local danger = Statements.dangerous(stmt.text)
+        if danger then
+          table.insert(dangers, string.format("-- line %d: %s", stmt.start_line, danger.message))
+        end
+      end
+    end
+
     local function run_all()
       local index = 0
       local function step()
@@ -419,6 +468,7 @@ function Query.execute_buffer()
         end
         Query.run(stmt.text, datasource, {
           confirm = false,
+          dangerous_confirmed = #dangers > 0,
           on_done = function(_, err)
             if err then
               vim.notify(
@@ -440,7 +490,13 @@ function Query.execute_buffer()
     end
     local needs_confirm = writes > 0 and Query.should_confirm(datasource, "update")
       or Query.should_confirm(datasource, "select")
-    if needs_confirm then
+    if #dangers > 0 then
+      show_confirmation_prompt(
+        table.concat(dangers, "\n") .. "\n\n" .. table.concat(preview, ";\n") .. ";",
+        string.format("Run %d statement(s) on %s? %d dangerous statement(s)", #statements, datasource.name, #dangers),
+        run_all
+      )
+    elseif needs_confirm then
       show_confirmation_prompt(
         table.concat(preview, ";\n") .. ";",
         string.format("Run %d statement(s) (%d write) on %s?", #statements, writes, datasource.name),
