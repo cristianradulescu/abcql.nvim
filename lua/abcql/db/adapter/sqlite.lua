@@ -55,7 +55,7 @@ function SQLiteAdapter:query_rows(query, callback, on_rows)
       return
     end
     on_rows(result.rows or {})
-  end)
+  end, Adapter.SCHEMA_QUERY_OPTS)
 end
 
 --- Fetch the schemas of the database file (`main`, plus any attached ones)

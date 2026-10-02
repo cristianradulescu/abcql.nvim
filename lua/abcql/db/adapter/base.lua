@@ -13,6 +13,11 @@
 local Adapter = {}
 Adapter.__index = Adapter
 
+--- Options for schema introspection queries: never capped by `query.max_rows`,
+--- which is meant for result grids -- a truncated INFORMATION_SCHEMA result
+--- would silently drop the tables/columns sorted past the cap.
+Adapter.SCHEMA_QUERY_OPTS = { max_rows = 0 }
+
 --- Create a new adapter instance
 --- @param config AdapterConfig Configuration parameters for the adapter
 --- @return abcql.db.adapter.Adapter

@@ -47,7 +47,7 @@ function MySQLAdapter:get_databases(callback)
     end
 
     callback(databases, nil)
-  end)
+  end, Adapter.SCHEMA_QUERY_OPTS)
 end
 
 --- Fetch list of tables in a database asynchronously
@@ -73,7 +73,7 @@ function MySQLAdapter:get_tables(database, callback)
     end
 
     callback(tables, nil)
-  end)
+  end, Adapter.SCHEMA_QUERY_OPTS)
 end
 
 --- Fetch list of columns in a table asynchronously
@@ -101,7 +101,7 @@ function MySQLAdapter:get_columns(database, table_name, callback)
     end
 
     callback(columns, nil)
-  end)
+  end, Adapter.SCHEMA_QUERY_OPTS)
 end
 
 --- Fetch the columns of every table in a database with one query
@@ -128,7 +128,7 @@ function MySQLAdapter:get_all_columns(database, callback)
     end
 
     callback(by_table, nil)
-  end)
+  end, Adapter.SCHEMA_QUERY_OPTS)
 end
 
 --- Fetch primary/foreign key constraints of every table in a database with one query
@@ -184,7 +184,7 @@ function MySQLAdapter:get_all_constraints(database, callback)
     end
 
     callback(by_table, nil)
-  end)
+  end, Adapter.SCHEMA_QUERY_OPTS)
 end
 
 --- Fetch constraints for a table asynchronously
@@ -241,7 +241,7 @@ function MySQLAdapter:get_constraints(database, table_name, callback)
     end
 
     callback(constraints, nil)
-  end)
+  end, Adapter.SCHEMA_QUERY_OPTS)
 end
 
 --- Fetch indexes for a table asynchronously
@@ -296,7 +296,7 @@ function MySQLAdapter:get_indexes(database, table_name, callback)
     end
 
     callback(indexes, nil)
-  end)
+  end, Adapter.SCHEMA_QUERY_OPTS)
 end
 
 --- Escape a MySQL identifier using backticks

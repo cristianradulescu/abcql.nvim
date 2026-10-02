@@ -183,3 +183,42 @@ describe("MySQLAdapter constraint names", function()
     )
   end)
 end)
+
+describe("MySQLAdapter schema queries", function()
+  local Query = require("abcql.db.query")
+  local original_execute_async
+  local sent_opts
+  local adapter
+
+  before_each(function()
+    adapter = MySQLAdapter.new({ database = "shop" })
+    sent_opts = {}
+    original_execute_async = Query.execute_async
+    Query.execute_async = function(_, _, callback, opts)
+      table.insert(sent_opts, opts or {})
+      callback({ rows = {} }, nil)
+    end
+  end)
+
+  after_each(function()
+    Query.execute_async = original_execute_async
+  end)
+
+  -- query.max_rows is for result grids: capping INFORMATION_SCHEMA would drop the
+  -- columns of every table sorted past the cap from the completion cache
+  it("are never capped by query.max_rows", function()
+    local noop = function() end
+    adapter:get_databases(noop)
+    adapter:get_tables("shop", noop)
+    adapter:get_columns("shop", "user_role", noop)
+    adapter:get_all_columns("shop", noop)
+    adapter:get_all_constraints("shop", noop)
+    adapter:get_constraints("shop", "user_role", noop)
+    adapter:get_indexes("shop", "user_role", noop)
+
+    assert.are.equal(7, #sent_opts)
+    for _, opts in ipairs(sent_opts) do
+      assert.are.equal(0, opts.max_rows)
+    end
+  end)
+end)

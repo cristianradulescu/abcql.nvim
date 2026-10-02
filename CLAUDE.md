@@ -95,7 +95,9 @@ query (reported back as the error string `Query cancelled`).
 
 `MySQLAdapter:get_databases`/`get_tables`/`get_columns`/`get_constraints`/`get_indexes` are just
 `INFORMATION_SCHEMA` SQL text run through that same `Query.execute_async`, so schema introspection
-(tree view, LSP completion cache) rides the Go backend for free — no separate code path.
+(tree view, LSP completion cache) rides the Go backend for free — no separate code path. They pass
+`Adapter.SCHEMA_QUERY_OPTS` (`max_rows = 0`): the `query.max_rows` cap is for result grids, and
+truncating INFORMATION_SCHEMA would silently drop every table/column sorted past it.
 
 Adding a new database engine now takes two changes: a Lua adapter implementing
 `abcql.db.adapter.base`'s interface (`get_databases`/`get_tables`/`get_columns`,

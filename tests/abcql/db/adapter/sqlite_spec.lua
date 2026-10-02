@@ -31,20 +31,28 @@ describe("SQLiteAdapter", function()
   describe("schema queries", function()
     local original_execute_async
     local executed
+    local sent_opts
     local rows
 
     before_each(function()
       executed = {}
+      sent_opts = {}
       rows = {}
       original_execute_async = Query.execute_async
-      Query.execute_async = function(_, sql, callback)
+      Query.execute_async = function(_, sql, callback, opts)
         table.insert(executed, sql)
+        table.insert(sent_opts, opts or {})
         callback({ rows = rows }, nil)
       end
     end)
 
     after_each(function()
       Query.execute_async = original_execute_async
+    end)
+
+    it("are never capped by query.max_rows", function()
+      adapter:get_all_columns("main", function() end)
+      assert.are.equal(0, sent_opts[1].max_rows)
     end)
 
     it("lists schemas without temp", function()
