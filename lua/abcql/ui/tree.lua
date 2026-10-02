@@ -724,10 +724,19 @@ function Tree.browse_table_data(node, callback)
   -- Build SELECT query with fully qualified table name
   local escaped_db = datasource.adapter:escape_identifier(database_name)
   local escaped_table = datasource.adapter:escape_identifier(table_name)
-  local query = string.format("SELECT * FROM %s.%s LIMIT 1000", escaped_db, escaped_table)
+  local query = string.format("SELECT * FROM %s.%s", escaped_db, escaped_table)
 
   local Query = require("abcql.db.query")
   local History = require("abcql.history")
+
+  -- Same rule as Query.run: the configured auto-LIMIT bounds the result and
+  -- max_rows is lifted; with auto-LIMIT disabled max_rows caps it instead.
+  local opts = { database = database_name }
+  local limit = require("abcql.db.limit").for_datasource(datasource)
+  if limit > 0 then
+    query = string.format("%s LIMIT %d", query, limit)
+    opts.max_rows = 0
+  end
 
   Query.execute_async(datasource.adapter, query, function(results, err)
     -- Save to history (both success and error cases)
@@ -751,7 +760,7 @@ function Tree.browse_table_data(node, callback)
     if callback then
       callback(true)
     end
-  end, { database = database_name })
+  end, opts)
 end
 
 return Tree
