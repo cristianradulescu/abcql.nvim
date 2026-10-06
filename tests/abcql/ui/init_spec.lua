@@ -16,6 +16,11 @@ describe("UI", function()
     return vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   end
 
+  local function output_lines()
+    local buf = vim.fn.bufnr("[abcql] Query Output")
+    return vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  end
+
   before_each(function()
     original_notify = vim.notify
     original_select = vim.ui.select
@@ -103,7 +108,7 @@ describe("UI", function()
       assert.are.equal(" 1 row • auto LIMIT 1000", lines[#lines])
     end)
 
-    it("shows the datasource, query and summary in the results winbar", function()
+    it("shows the datasource and summary in the results winbar, the query in the Output tab", function()
       UI.open()
       local ds = require("abcql.db").connectionRegistry:get_datasource("dev")
       UI.display(
@@ -114,8 +119,13 @@ describe("UI", function()
       local results_win = vim.fn.bufwinid(vim.fn.bufnr("[abcql] Query Results"))
       local winbar = vim.wo[results_win].winbar
       assert.is_not_nil(winbar:find("dev/shop", 1, true))
-      assert.is_not_nil(winbar:find("select * from t", 1, true))
+      assert.is_nil(winbar:find("select", 1, true))
       assert.is_not_nil(winbar:find("0 rows", 1, true))
+      local output = output_lines()
+      assert.is_not_nil(output[1]:find("^%-%- dev/shop • %d"))
+      assert.are.same({ "-- c", "select  *", "from t" }, vim.list_slice(output, 2, 4))
+      assert.are.equal("-- 0 rows • 5ms", output[#output])
+      assert.is_not_nil(winbar:find("%= %#AbcqlFooter#g? keys", 1, true))
     end)
 
     it("renders errors and clears stored results", function()
@@ -126,16 +136,76 @@ describe("UI", function()
       assert.is_not_nil(table.concat(results_lines(), "\n"):find("boom", 1, true))
     end)
 
-    it("shows the query above the results when browsing history", function()
+    it("shows a history entry's query in the Output tab, not above the table", function()
       UI.open()
       UI.display(
         { headers = { "a" }, rows = { { "1" } }, row_count = 1 },
         nil,
-        { query = "select 1", history_position = "history 1/3" }
+        { query = "select 1", history_position = "history 1/3", executed_at = 0 }
       )
-      local lines = results_lines()
-      assert.are.equal(" Query:", lines[2])
-      assert.are.equal("   select 1", lines[4])
+      assert.is_not_nil(results_lines()[1]:find("^┌"))
+      local output = output_lines()
+      assert.are.equal("-- history 1/3 • " .. os.date("%Y-%m-%d %H:%M:%S", 0), output[1])
+      assert.are.equal("select 1", output[2])
+    end)
+
+    it("shows the SQL as sent when an auto LIMIT was added", function()
+      UI.open()
+      UI.display(
+        { headers = { "a" }, rows = {}, row_count = 0 },
+        nil,
+        { query = "select a from t", sent_query = "select a from t LIMIT 10" }
+      )
+      local output = table.concat(output_lines(), "\n")
+      assert.is_not_nil(output:find("auto LIMIT", 1, true))
+      assert.is_not_nil(output:find("select a from t LIMIT 10", 1, true))
+    end)
+
+    it("puts the error message in the Output tab", function()
+      UI.open()
+      UI.display("Unknown column 'x'", nil, { query = "select x" })
+      local output = output_lines()
+      assert.are.same({ "-- error:", "-- Unknown column 'x'" }, vim.list_slice(output, #output - 1, #output))
+    end)
+  end)
+
+  describe("tabs", function()
+    local function results_win()
+      return vim.fn.bufwinid(vim.fn.bufnr("[abcql] Query Results"))
+    end
+
+    it("switches the results window between Result and Output with o", function()
+      UI.open()
+      UI.display({ headers = { "a" }, rows = { { "1" } }, row_count = 1 }, nil, { query = "select 1" })
+      local win = results_win()
+      vim.api.nvim_set_current_win(win)
+      assert.is_not_nil(vim.wo[win].winbar:find("%#AbcqlTabActive# Result", 1, true))
+
+      vim.cmd("normal o")
+      assert.are.equal("[abcql] Query Output", vim.fn.bufname(vim.api.nvim_win_get_buf(win)))
+      assert.is_not_nil(vim.wo[win].winbar:find("%#AbcqlTabActive# Output", 1, true))
+
+      vim.cmd("normal o")
+      assert.are.equal("[abcql] Query Results", vim.fn.bufname(vim.api.nvim_win_get_buf(win)))
+    end)
+
+    it("goes back to the Result tab when a new result arrives", function()
+      UI.open()
+      local win = results_win()
+      vim.api.nvim_set_current_win(win)
+      vim.cmd("normal o")
+      UI.display({ headers = { "a" }, rows = { { "1" } }, row_count = 1 })
+      assert.are.equal("[abcql] Query Results", vim.fn.bufname(vim.api.nvim_win_get_buf(win)))
+    end)
+
+    it("keeps the Output tab across hiding and showing the panel", function()
+      UI.open()
+      vim.api.nvim_set_current_win(results_win())
+      vim.cmd("normal o")
+      UI.toggle_results()
+      UI.toggle_results()
+      local win = vim.fn.bufwinid(vim.fn.bufnr("[abcql] Query Output"))
+      assert.are_not.equal(-1, win)
     end)
   end)
 
@@ -257,6 +327,33 @@ describe("UI", function()
     end)
   end)
 
+  describe("keys legend", function()
+    it("lists every results key in a float that g? closes again", function()
+      UI.open()
+      local results_buf = vim.fn.bufnr("[abcql] Query Results")
+      local results_win = vim.fn.bufwinid(results_buf)
+      vim.api.nvim_set_current_win(results_win)
+
+      vim.cmd("normal g?")
+      local win = vim.api.nvim_get_current_win()
+      assert.are_not.equal(results_win, win)
+      local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n"):lower()
+      vim.cmd("normal g?")
+      local still_open = vim.api.nvim_win_is_valid(win)
+      pcall(vim.api.nvim_win_close, win, true)
+
+      local missing = {}
+      for _, map in ipairs(vim.api.nvim_buf_get_keymap(results_buf, "n")) do
+        if map.lhs ~= "g?" and not text:find(map.lhs:lower(), 1, true) then
+          table.insert(missing, map.lhs)
+        end
+      end
+      assert.are.same({}, missing)
+      assert.is_false(still_open)
+      assert.are.equal(results_win, vim.api.nvim_get_current_win())
+    end)
+  end)
+
   describe("running indicator", function()
     it("sets and clears the running winbar", function()
       UI.open()
@@ -264,6 +361,7 @@ describe("UI", function()
       UI.set_running("select sleep(1)", ds)
       local results_win = vim.fn.bufwinid(vim.fn.bufnr("[abcql] Query Results"))
       assert.is_not_nil(vim.wo[results_win].winbar:find("running", 1, true))
+      assert.is_not_nil(vim.wo[results_win].winbar:find("g? keys", 1, true))
       assert.has_no.errors(UI.clear_running)
     end)
   end)

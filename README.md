@@ -374,8 +374,15 @@ backend process and records the attempt in history.
 
 ### Results Panel
 
-The winbar above the results shows the datasource/database, the statement, and the row count and
-duration.
+The results panel has two tabs, switched with `o`:
+
+- **Result**: the result table (or the error / affected-rows message).
+- **Output**: the executed query in full, as it was sent to the server (including an added
+  `LIMIT`), with the datasource, when it ran, and the outcome (row count, duration, full error).
+
+Running a query, or moving through history, always shows the Result tab. The winbar shows the
+tabs, the datasource/database, and the row count and duration, with a `g? keys` reminder on the
+right (`g?` lists the results keys).
 
 #### Row limits
 
@@ -398,6 +405,7 @@ trailing `;`/comment and before `FOR UPDATE`/`FOR SHARE`/`LOCK IN SHARE MODE`.
 
 | Key             | Action                                                |
 |-----------------|-------------------------------------------------------|
+| `o`             | Switch between the Result and Output tabs             |
 | `K` / `<CR>`    | Open the full cell value in a float (`y` yanks it)    |
 | `yc`            | Yank the cell under the cursor                        |
 | `yr`            | Yank the row under the cursor (tab-separated)         |
@@ -408,6 +416,7 @@ trailing `;`/comment and before `FOR UPDATE`/`FOR SHARE`/`LOCK IN SHARE MODE`.
 | `F` / `X`       | Remove the last filter / clear all filters and the sort |
 | `<C-o>` / `<C-i>`, `[h` / `]h` | Older / newer entry in query history   |
 | `<C-c>`         | Cancel the running query                              |
+| `g?`            | Show this list of keys in a float                     |
 
 Sorting and filtering work on the loaded rows only, without re-running the query; on a partial
 result (`auto LIMIT` / `max_rows` in the footer) they don't see the rows that weren't fetched.

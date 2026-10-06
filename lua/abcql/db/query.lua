@@ -309,7 +309,7 @@ function Query.run(sql, datasource, opts)
 
       History.save(sql, datasource.name, database, results, err)
 
-      local display_opts = { datasource = datasource, query = sql }
+      local display_opts = { datasource = datasource, query = sql, sent_query = sent_sql }
       if err then
         UI.display(err, nil, display_opts)
       else

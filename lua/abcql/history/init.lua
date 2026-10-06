@@ -231,6 +231,7 @@ function History.pick(opts)
         local display_opts = {
           query = entry.query,
           history_position = "history " .. os.date("%Y-%m-%d %H:%M", entry.timestamp),
+          executed_at = entry.timestamp,
           datasource = { name = entry.datasource, adapter = { config = { database = entry.database } } },
         }
         UI.display(entry.error or entry.result, nil, display_opts)

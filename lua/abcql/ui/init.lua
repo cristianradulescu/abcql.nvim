@@ -2,12 +2,13 @@
 local UI = {}
 
 ---@alias abcql.UI.LayoutOpts { editor_buf: number?, editor_buf_owned: boolean? }
----@alias abcql.UI.DisplayOpts { query: string?, datasource: Datasource?, history_position: string? }
+---@alias abcql.UI.DisplayOpts { query: string?, sent_query: string?, datasource: Datasource?, history_position: string?, executed_at: integer? }
 
 -- Augroup for all UI-related autocmds (WinClosed, BufEnter guards)
 local AUGROUP = vim.api.nvim_create_augroup("abcql_ui", { clear = true })
 
 local RESULTS_BUF_NAME = "[abcql] Query Results"
+local OUTPUT_BUF_NAME = "[abcql] Query Output"
 
 -- State management for the abcql UI
 -- This table tracks all buffers, windows, and visibility state for the UI components
@@ -17,6 +18,11 @@ local state = {
   editor_buf_owned = false,
   results_buf = nil,
   datasource_tree_buf = nil,
+
+  -- The results window has two tabs: "result" shows results_buf (the table), "output" shows
+  -- output_buf (the executed query and its outcome)
+  output_buf = nil,
+  results_tab = "result",
 
   -- Window IDs for the main components
   editor_win = nil,
@@ -45,8 +51,10 @@ local state = {
   -- 1-indexed buffer line of the table's top border (cells start 3 lines below)
   table_top_line = nil,
 
-  -- Winbar text for the results window (context of the displayed result)
+  -- Winbar text for the results window (context of the displayed result), and the arguments it
+  -- was built from so switching tabs can rebuild it
   results_winbar = "",
+  winbar_args = nil,
 
   -- Display options of the live (non-history) result, restored when leaving history
   live_display_opts = nil,
@@ -137,6 +145,9 @@ local function apply_panel_win_options(win, opts)
   end
 end
 
+--- Right-aligned results winbar hint pointing at the `g?` keys legend
+local RESULTS_KEYS_HINT = "%= %#AbcqlFooter#g? keys %*"
+
 --- Set the results window winbar (no-op when the window is hidden)
 --- @param text string Already-escaped winbar text
 local function set_results_winbar(text)
@@ -144,6 +155,54 @@ local function set_results_winbar(text)
   if state.results_win and vim.api.nvim_win_is_valid(state.results_win) then
     vim.wo[state.results_win].winbar = text
   end
+end
+
+--- "name/database" label of the datasource a result came from
+--- @param ds Datasource|nil
+--- @return string|nil
+local function datasource_label(ds)
+  if not (ds and ds.name) then
+    return nil
+  end
+  local db = ds.adapter and ds.adapter.config and ds.adapter.config.database
+  if db and db ~= "" then
+    return ds.name .. "/" .. db
+  end
+  return ds.name
+end
+
+--- Build the results winbar: the Result/Output tabs, then the context of the displayed result
+--- @param opts abcql.UI.DisplayOpts
+--- @param summary string Result summary (row count, duration...)
+--- @param summary_group string Highlight group for the summary
+--- @return string
+local function build_results_winbar(opts, summary, summary_group)
+  local tabs = {}
+  for _, tab in ipairs({ { "result", "Result" }, { "output", "Output" } }) do
+    local group = state.results_tab == tab[1] and "AbcqlTabActive" or "AbcqlTabInactive"
+    table.insert(tabs, "%#" .. group .. "# " .. tab[2] .. " %*")
+  end
+  -- %< truncates the context, never the tabs, when the window is too narrow
+  local parts = { table.concat(tabs) .. "%<" }
+  local label = datasource_label(opts.datasource)
+  if label then
+    local group = opts.datasource.highlight or "AbcqlDatasource"
+    table.insert(parts, "%#" .. group .. "#" .. escape_statusline(label) .. "%*")
+  end
+  if opts.history_position then
+    table.insert(parts, "%#AbcqlQueryLabel#" .. escape_statusline(opts.history_position) .. "%*")
+  end
+  table.insert(parts, "%#" .. summary_group .. "#" .. escape_statusline(summary) .. "%*")
+  return table.concat(parts, " %#AbcqlBorder#•%* ") .. RESULTS_KEYS_HINT
+end
+
+--- Build and set the results winbar, remembering its arguments for tab switches
+--- @param opts abcql.UI.DisplayOpts
+--- @param summary string
+--- @param summary_group string
+local function update_results_winbar(opts, summary, summary_group)
+  state.winbar_args = { opts, summary, summary_group }
+  set_results_winbar(build_results_winbar(opts, summary, summary_group))
 end
 
 --- Create the results buffer
@@ -161,6 +220,53 @@ local function create_results_buffer()
   require("abcql.ui.highlights").setup()
 
   return buf
+end
+
+--- Create the output buffer (the Output tab: executed query and its outcome)
+--- @return number buf Buffer ID
+local function create_output_buffer()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_name(buf, OUTPUT_BUF_NAME)
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].bufhidden = "hide"
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].modifiable = false
+  -- SQL highlighting without setting 'filetype', which would attach SQL language servers
+  if not pcall(vim.treesitter.start, buf, "sql") then
+    vim.bo[buf].syntax = "sql"
+  end
+  return buf
+end
+
+--- Buffer shown by a results tab
+--- @param tab "result"|"output"
+--- @return number|nil
+local function tab_buf(tab)
+  return tab == "output" and state.output_buf or state.results_buf
+end
+
+--- Show a tab in the results window (remembered while the window is hidden)
+--- @param tab "result"|"output"
+local function show_results_tab(tab)
+  state.results_tab = tab
+  local win, buf = state.results_win, tab_buf(tab)
+  if win and vim.api.nvim_win_is_valid(win) and buf and vim.api.nvim_buf_is_valid(buf) then
+    if vim.api.nvim_win_get_buf(win) ~= buf then
+      vim.wo[win].winfixbuf = false
+      vim.api.nvim_win_set_buf(win, buf)
+      vim.wo[win].winfixbuf = true
+    end
+    -- The query reads better wrapped; table rows must not wrap
+    vim.wo[win].wrap = tab == "output"
+  end
+  if state.winbar_args then
+    set_results_winbar(build_results_winbar(unpack(state.winbar_args)))
+  end
+end
+
+--- Switch the results window between the Result and Output tabs
+local function toggle_results_tab()
+  show_results_tab(state.results_tab == "output" and "result" or "output")
 end
 
 --- Byte offsets of each data cell on a table line.
@@ -428,6 +534,7 @@ local function display_history_entry(entry, is_latest)
   local display_opts = {
     query = entry.query,
     history_position = string.format("history %d/%d", pos, total),
+    executed_at = entry.timestamp,
     datasource = { name = entry.datasource, adapter = { config = { database = entry.database } } },
   }
   if entry.error then
@@ -535,40 +642,166 @@ local function clear_view()
   UI.refresh_view()
 end
 
---- Setup keymaps for the results buffer
---- @param buf number Buffer ID
-local function setup_results_keymaps(buf)
-  local function map(lhs, rhs, desc)
-    vim.keymap.set("n", lhs, rhs, { buffer = buf, desc = desc })
+--- Keys of the results window, grouped as the `g?` legend shows them. Each entry is
+--- { keys, action, description }; several keys in one entry share the action. Groups marked
+--- `output` are bound in the Output tab too, the others only in the Result tab (the table).
+--- @type { title: string, output: boolean?, maps: { [1]: string[], [2]: function, [3]: string }[] }[]
+local RESULTS_KEYMAPS = {
+  {
+    title = "Tabs",
+    output = true,
+    maps = {
+      { { "o" }, toggle_results_tab, "switch between Result and Output (executed query)" },
+    },
+  },
+  {
+    title = "Cells",
+    maps = {
+      { { "K", "<CR>" }, show_cell_popup, "show full cell content (y yanks it)" },
+      { { "yc" }, yank_cell, "yank cell" },
+      { { "yr" }, yank_row, "yank row (tab-separated)" },
+      {
+        { "<Tab>" },
+        function()
+          move_cell(1)
+        end,
+        "next cell",
+      },
+      {
+        { "<S-Tab>" },
+        function()
+          move_cell(-1)
+        end,
+        "previous cell",
+      },
+    },
+  },
+  {
+    title = "Sort & filter",
+    maps = {
+      { { "s" }, sort_by_cursor_column, "sort by column (asc/desc/off)" },
+      {
+        { "=" },
+        function()
+          filter_by_cell(false)
+        end,
+        "keep rows equal to this cell",
+      },
+      {
+        { "!" },
+        function()
+          filter_by_cell(true)
+        end,
+        "drop rows equal to this cell",
+      },
+      { { "f" }, filter_by_text, "filter rows by text (text or col:text)" },
+      { { "F" }, pop_filter, "remove last filter" },
+      { { "X" }, clear_view, "clear filters and sort" },
+    },
+  },
+  {
+    title = "History",
+    output = true,
+    maps = {
+      { { "<C-o>", "[h" }, history_go_back, "previous query in history" },
+      { { "<C-i>", "]h" }, history_go_forward, "next query in history" },
+    },
+  },
+  {
+    title = "Query",
+    output = true,
+    maps = {
+      {
+        { "<C-c>" },
+        function()
+          require("abcql.db.query").cancel()
+        end,
+        "cancel running query",
+      },
+    },
+  },
+}
+
+--- Show a floating legend of the results buffer keys (built from RESULTS_KEYMAPS)
+local function show_results_legend()
+  local lines, marks = {}, {}
+  local key_width = 0
+  for _, group in ipairs(RESULTS_KEYMAPS) do
+    for _, m in ipairs(group.maps) do
+      key_width = math.max(key_width, vim.fn.strdisplaywidth(table.concat(m[1], " ")))
+    end
   end
 
-  map("K", show_cell_popup, "abcql: show full cell content")
-  map("<CR>", show_cell_popup, "abcql: show full cell content")
-  map("yc", yank_cell, "abcql: yank cell")
-  map("yr", yank_row, "abcql: yank row (tab-separated)")
-  map("<Tab>", function()
-    move_cell(1)
-  end, "abcql: next cell")
-  map("<S-Tab>", function()
-    move_cell(-1)
-  end, "abcql: previous cell")
-  map("s", sort_by_cursor_column, "abcql: sort by column (asc/desc/off)")
-  map("=", function()
-    filter_by_cell(false)
-  end, "abcql: keep rows equal to this cell")
-  map("!", function()
-    filter_by_cell(true)
-  end, "abcql: drop rows equal to this cell")
-  map("f", filter_by_text, "abcql: filter rows by text")
-  map("F", pop_filter, "abcql: remove last filter")
-  map("X", clear_view, "abcql: clear filters and sort")
-  map("<C-o>", history_go_back, "abcql: previous query in history")
-  map("<C-i>", history_go_forward, "abcql: next query in history")
-  map("[h", history_go_back, "abcql: previous query in history")
-  map("]h", history_go_forward, "abcql: next query in history")
-  map("<C-c>", function()
-    require("abcql.db.query").cancel()
-  end, "abcql: cancel running query")
+  for i, group in ipairs(RESULTS_KEYMAPS) do
+    if i > 1 then
+      table.insert(lines, "")
+    end
+    table.insert(lines, " " .. group.title)
+    table.insert(marks, { #lines - 1, "AbcqlHeader", 0, -1 })
+    for _, m in ipairs(group.maps) do
+      local keys = table.concat(m[1], " ")
+      local pad = string.rep(" ", key_width - vim.fn.strdisplaywidth(keys))
+      table.insert(lines, "   " .. keys .. pad .. "  " .. m[3])
+      table.insert(marks, { #lines - 1, "Special", 3, 3 + #keys })
+    end
+  end
+  table.insert(lines, "")
+  table.insert(lines, " q / <Esc> / g? close")
+  table.insert(marks, { #lines - 1, "AbcqlFooter", 0, -1 })
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].bufhidden = "wipe"
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+  local highlights = require("abcql.ui.highlights")
+  for _, mark in ipairs(marks) do
+    highlights.add(buf, mark[2], mark[1], mark[3], mark[4])
+  end
+
+  local width = 0
+  for _, line in ipairs(lines) do
+    width = math.max(width, vim.fn.strdisplaywidth(line))
+  end
+  width = math.min(width + 1, vim.o.columns - 4)
+  local height = math.min(#lines, vim.o.lines - 4)
+
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    row = math.floor((vim.o.lines - height) / 2) - 1,
+    col = math.floor((vim.o.columns - width) / 2),
+    width = width,
+    height = height,
+    style = "minimal",
+    border = "rounded",
+    title = " abcql results keys ",
+    title_pos = "center",
+  })
+
+  local function close()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end
+  for _, key in ipairs({ "q", "<Esc>", "g?" }) do
+    vim.keymap.set("n", key, close, { buffer = buf, nowait = true })
+  end
+  vim.api.nvim_create_autocmd("WinLeave", { buffer = buf, once = true, callback = close })
+end
+
+--- Setup keymaps for a results window buffer
+--- @param buf number Buffer ID
+--- @param output boolean|nil The Output tab's buffer: only the groups marked `output`
+local function setup_results_keymaps(buf, output)
+  for _, group in ipairs(RESULTS_KEYMAPS) do
+    if group.output or not output then
+      for _, m in ipairs(group.maps) do
+        for _, lhs in ipairs(m[1]) do
+          vim.keymap.set("n", lhs, m[2], { buffer = buf, desc = "abcql: " .. m[3] })
+        end
+      end
+    end
+  end
+  vim.keymap.set("n", "g?", show_results_legend, { buffer = buf, desc = "abcql: show results keys" })
 end
 
 --- Create the data source tree buffer
@@ -739,14 +972,19 @@ local function open_results_window()
     state.results_buf = create_results_buffer()
     setup_results_keymaps(state.results_buf)
   end
+  if not (state.output_buf and vim.api.nvim_buf_is_valid(state.output_buf)) then
+    state.output_buf = create_output_buffer()
+    setup_results_keymaps(state.output_buf, true)
+  end
 
   local current_win = vim.api.nvim_get_current_win()
 
   vim.api.nvim_set_current_win(state.editor_win)
   vim.cmd("rightbelow split")
   state.results_win = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(state.results_win, state.results_buf)
+  vim.api.nvim_win_set_buf(state.results_win, tab_buf(state.results_tab))
   apply_panel_win_options(state.results_win, { sidescroll = true })
+  vim.wo[state.results_win].wrap = state.results_tab == "output"
   vim.api.nvim_win_set_height(state.results_win, results_height())
   vim.wo[state.results_win].winfixbuf = true
   vim.wo[state.results_win].winbar = state.results_winbar
@@ -804,9 +1042,11 @@ function UI.open(opts)
   end
 
   state.results_buf = create_results_buffer()
+  state.output_buf = create_output_buffer()
   state.datasource_tree_buf = create_data_source_tree_buffer()
 
   setup_results_keymaps(state.results_buf)
+  setup_results_keymaps(state.output_buf, true)
   setup_tree_keymaps(state.datasource_tree_buf)
 
   -- Register display callback to break circular dependency (tree -> ui)
@@ -836,7 +1076,8 @@ function UI.open(opts)
   state.editor_win = cur_win
   vim.api.nvim_win_set_buf(state.editor_win, state.editor_buf)
 
-  state.results_winbar = "%#AbcqlWinbarLabel# results %* no query yet"
+  state.results_tab = "result"
+  update_results_winbar({}, "no query yet", "AbcqlFooter")
   open_results_window()
 
   -- Return focus to the editor window
@@ -882,8 +1123,8 @@ function UI.open(opts)
         end)
       end
 
-      if win == state.results_win and buf ~= state.results_buf then
-        redirect(state.results_win, state.results_buf)
+      if win == state.results_win and buf ~= state.results_buf and buf ~= state.output_buf then
+        redirect(state.results_win, tab_buf(state.results_tab))
       elseif win == state.datasource_tree_win and buf ~= state.datasource_tree_buf then
         redirect(state.datasource_tree_win, state.datasource_tree_buf)
       end
@@ -946,6 +1187,10 @@ function UI.close()
     vim.api.nvim_buf_delete(state.results_buf, { force = true })
   end
 
+  if state.output_buf and vim.api.nvim_buf_is_valid(state.output_buf) then
+    vim.api.nvim_buf_delete(state.output_buf, { force = true })
+  end
+
   if state.datasource_tree_buf and vim.api.nvim_buf_is_valid(state.datasource_tree_buf) then
     vim.api.nvim_buf_delete(state.datasource_tree_buf, { force = true })
   end
@@ -954,6 +1199,8 @@ function UI.close()
   state.editor_buf = nil
   state.editor_buf_owned = false
   state.results_buf = nil
+  state.output_buf = nil
+  state.results_tab = "result"
   state.datasource_tree_buf = nil
   state.editor_win = nil
   state.results_win = nil
@@ -964,6 +1211,7 @@ function UI.close()
   state.current_widths = nil
   state.table_top_line = nil
   state.results_winbar = ""
+  state.winbar_args = nil
 end
 
 --- Make sure the results window is visible (re-opening it if it was toggled off)
@@ -1064,52 +1312,64 @@ local function format_duration(duration_ms)
   end
 end
 
---- First non-comment line of a query, collapsed to one line and shortened
---- @param query string|nil
---- @param max number
---- @return string|nil
-local function query_summary(query, max)
-  if not query then
-    return nil
-  end
-  local text = require("abcql.db.statements").strip_leading_comments(query)
-  text = text:gsub("%s+", " ")
-  text = vim.trim(text)
-  if text == "" then
-    return nil
-  end
-  if vim.fn.strdisplaywidth(text) > max then
-    text = require("abcql.ui.format").truncate(text, max)
-  end
-  return text
-end
-
---- Build the results winbar for a displayed result
+--- Render the Output tab: where and when the query ran, the SQL as sent, and its outcome
 --- @param opts abcql.UI.DisplayOpts
---- @param summary string Result summary (row count, duration...)
---- @param summary_group string Highlight group for the summary
---- @return string
-local function build_results_winbar(opts, summary, summary_group)
-  local parts = { "%#AbcqlWinbarLabel# results %*" }
-  local ds = opts.datasource
-  if ds and ds.name then
-    local group = ds.highlight or "AbcqlDatasource"
-    local label = ds.name
-    local db = ds.adapter and ds.adapter.config and ds.adapter.config.database
-    if db and db ~= "" then
-      label = label .. "/" .. db
-    end
-    table.insert(parts, "%#" .. group .. "#" .. escape_statusline(label) .. "%*")
+--- @param outcome string[] Outcome lines (summary, or the error message)
+--- @param outcome_group string Highlight group for the outcome
+local function render_output(opts, outcome, outcome_group)
+  local buf = state.output_buf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+
+  local context = {}
+  local label = datasource_label(opts.datasource)
+  if label then
+    table.insert(context, label)
   end
   if opts.history_position then
-    table.insert(parts, "%#AbcqlQueryLabel#" .. escape_statusline(opts.history_position) .. "%*")
+    table.insert(context, opts.history_position)
   end
-  local q = query_summary(opts.query, math.max(20, vim.o.columns - 60))
-  if q then
-    table.insert(parts, escape_statusline(q))
+  if opts.executed_at then
+    table.insert(context, os.date("%Y-%m-%d %H:%M:%S", opts.executed_at))
   end
-  table.insert(parts, "%#" .. summary_group .. "#" .. escape_statusline(summary) .. "%*")
-  return table.concat(parts, " %#AbcqlBorder#•%* ")
+
+  local lines = {}
+  if #context > 0 then
+    table.insert(lines, "-- " .. table.concat(context, " • "))
+  end
+  if opts.sent_query and opts.sent_query ~= opts.query then
+    table.insert(lines, "-- sent with an auto LIMIT (the editor keeps the query as written)")
+  end
+  local sql = vim.trim(opts.sent_query or opts.query or "")
+  if sql ~= "" then
+    vim.list_extend(lines, vim.split(sql, "\n"))
+  end
+  table.insert(lines, "")
+  local outcome_start = #lines
+  for _, line in ipairs(outcome) do
+    table.insert(lines, "-- " .. line)
+  end
+
+  vim.bo[buf].modifiable = true
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+
+  local highlights = require("abcql.ui.highlights")
+  highlights.clear(buf)
+  for i = outcome_start, #lines - 1 do
+    highlights.add(buf, outcome_group, i, 0, -1)
+  end
+end
+
+--- Set the results winbar and the Output tab for a result's outcome
+--- @param opts abcql.UI.DisplayOpts
+--- @param summary string Short outcome for the winbar
+--- @param group string Highlight group for the outcome
+--- @param outcome string[]|nil Outcome lines for the Output tab (default: the summary)
+local function show_outcome(opts, summary, group, outcome)
+  update_results_winbar(opts, summary, group)
+  render_output(opts, outcome or { summary }, group)
 end
 
 --- Show the "Running…" indicator in the results winbar
@@ -1126,15 +1386,14 @@ function UI.set_running(query, datasource)
   local opts = { query = query, datasource = datasource }
   local function refresh()
     local elapsed = (vim.uv.hrtime() - started) / 1e6
-    set_results_winbar(
-      build_results_winbar(
-        opts,
-        string.format("running… %s  (<C-c> cancel)", format_duration(elapsed)),
-        "AbcqlRunning"
-      )
+    update_results_winbar(
+      opts,
+      string.format("running… %s  (<C-c> cancel)", format_duration(elapsed)),
+      "AbcqlRunning"
     )
     vim.cmd("redrawstatus")
   end
+  render_output(opts, { "running… (<C-c> cancel)" }, "AbcqlRunning")
   refresh()
 
   state.running_timer = vim.uv.new_timer()
@@ -1175,21 +1434,6 @@ local function render(buf, results, opts, keep_position)
   highlights.clear(buf)
 
   local lines = {}
-  local query_line_count = 0
-
-  -- History browsing: show the full query above the results
-  if opts.history_position and opts.query then
-    table.insert(lines, "")
-    table.insert(lines, " Query:")
-    table.insert(lines, " ──────")
-    for _, line in ipairs(vim.split(opts.query, "\n")) do
-      table.insert(lines, "   " .. line)
-    end
-    table.insert(lines, "")
-    table.insert(lines, " Results:")
-    table.insert(lines, " ────────")
-    query_line_count = #lines
-  end
 
   state.table_top_line = nil
   state.visible_rows = nil
@@ -1229,11 +1473,8 @@ local function render(buf, results, opts, keep_position)
     table.insert(lines, "")
 
     set_results_lines(buf, lines)
-    if query_line_count > 0 then
-      highlights.apply_query_highlights(buf, query_line_count)
-    end
-    highlights.apply_error_highlights(buf, query_line_count, #lines)
-    set_results_winbar(build_results_winbar(opts, "error", "AbcqlError"))
+    highlights.apply_error_highlights(buf, 0, #lines)
+    show_outcome(opts, "error", "AbcqlError", vim.list_extend({ "error:" }, vim.split(results, "\n")))
     return
   end
 
@@ -1267,11 +1508,8 @@ local function render(buf, results, opts, keep_position)
     table.insert(lines, "")
 
     set_results_lines(buf, lines)
-    if query_line_count > 0 then
-      highlights.apply_query_highlights(buf, query_line_count)
-    end
-    highlights.apply_write_highlights(buf, query_line_count, #lines)
-    set_results_winbar(build_results_winbar(opts, summary, "AbcqlSuccess"))
+    highlights.apply_write_highlights(buf, 0, #lines)
+    show_outcome(opts, summary, "AbcqlSuccess")
     return
   end
 
@@ -1279,7 +1517,7 @@ local function render(buf, results, opts, keep_position)
   if not results.headers or #results.headers == 0 then
     table.insert(lines, " No results")
     set_results_lines(buf, lines)
-    set_results_winbar(build_results_winbar(opts, "no results", "AbcqlFooter"))
+    show_outcome(opts, "no results", "AbcqlFooter")
     return
   end
 
@@ -1347,10 +1585,7 @@ local function render(buf, results, opts, keep_position)
   set_results_lines(buf, lines, keep_position)
 
   -- Apply syntax highlighting
-  if query_line_count > 0 then
-    highlights.apply_query_highlights(buf, query_line_count)
-  end
-  highlights.apply_highlights(buf, { headers = header_labels, rows = rows }, query_line_count, widths)
+  highlights.apply_highlights(buf, { headers = header_labels, rows = rows }, 0, widths)
 
   -- Highlight footer lines
   for i = table_end_line, #lines - 1 do
@@ -1358,13 +1593,13 @@ local function render(buf, results, opts, keep_position)
   end
 
   local summary_hl = (results.truncated or limit_hit) and "AbcqlTruncated" or "AbcqlFooter"
-  set_results_winbar(build_results_winbar(opts, summary, summary_hl))
+  show_outcome(opts, summary, summary_hl)
 end
 
 --- Display query results or errors in the results buffer
 --- @param results QueryResult|string Results object with columns, rows, and optional metadata, or error message string
 --- @param results_title string? Optional buffer name override (kept for backwards compatibility)
---- @param opts abcql.UI.DisplayOpts? Display options: query shown above the results, datasource for the winbar
+--- @param opts abcql.UI.DisplayOpts? Display options: query for the Output tab, datasource for the winbar
 function UI.display(results, results_title, opts)
   opts = opts or {}
   stop_running_timer()
@@ -1386,8 +1621,13 @@ function UI.display(results, results_title, opts)
     pcall(vim.api.nvim_buf_set_name, buf, results_title)
   end
 
+  -- A new result is shown in the Result tab; the Output tab tells when it ran
+  opts = vim.tbl_extend("keep", opts, { executed_at = os.time() })
+  show_results_tab("result")
+
   -- Store current results for export (only if not an error string); a new result starts with
   -- no sort or filter
+
   if type(results) == "table" then
     state.current_results = results
     state.current_view = require("abcql.ui.view").new()

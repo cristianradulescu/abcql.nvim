@@ -62,10 +62,11 @@ function M.setup()
 
   -- History query display
   vim.api.nvim_set_hl(0, "AbcqlQueryLabel", { link = "Title", default = true })
-  vim.api.nvim_set_hl(0, "AbcqlQueryText", { link = "String", default = true })
 
   -- Winbar (editor datasource label + results context)
   vim.api.nvim_set_hl(0, "AbcqlWinbarLabel", { link = "Title", default = true })
+  vim.api.nvim_set_hl(0, "AbcqlTabActive", { link = "TabLineSel", default = true })
+  vim.api.nvim_set_hl(0, "AbcqlTabInactive", { link = "Comment", default = true })
   vim.api.nvim_set_hl(0, "AbcqlDatasource", { link = "Function", default = true })
   vim.api.nvim_set_hl(0, "AbcqlReadonly", { link = "DiagnosticWarn", default = true })
   vim.api.nvim_set_hl(0, "AbcqlRunning", { link = "DiagnosticInfo", default = true })
@@ -241,30 +242,6 @@ end
 --- @param line_num number Line number (0-indexed)
 function M.apply_footer_highlight(buf, line_num)
   M.add(buf, "AbcqlFooter", line_num, 0, -1)
-end
-
---- Apply highlights for query section in history view
---- @param buf number Buffer ID
---- @param query_line_count number Number of lines in the query section
-function M.apply_query_highlights(buf, query_line_count)
-  if query_line_count == 0 then
-    return
-  end
-
-  -- Line 1 (0-indexed: 1): "Query:" label
-  M.add(buf, "AbcqlQueryLabel", 1, 0, -1)
-  -- Line 2 (0-indexed: 2): separator "──────"
-  M.add(buf, "AbcqlBorder", 2, 0, -1)
-
-  -- Query text lines (simple highlighting)
-  for line = 3, query_line_count - 3 do
-    M.add(buf, "AbcqlQueryText", line, 0, -1)
-  end
-
-  -- "Results:" label (query_line_count - 2)
-  M.add(buf, "AbcqlQueryLabel", query_line_count - 2, 0, -1)
-  -- Separator "────────" (query_line_count - 1)
-  M.add(buf, "AbcqlBorder", query_line_count - 1, 0, -1)
 end
 
 return M
