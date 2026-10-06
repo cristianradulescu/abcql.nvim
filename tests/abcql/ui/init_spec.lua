@@ -345,6 +345,60 @@ describe("UI", function()
     end)
   end)
 
+  describe("history navigation", function()
+    local original_stdpath, data_dir, History
+
+    before_each(function()
+      data_dir = vim.fn.tempname()
+      original_stdpath = vim.fn.stdpath
+      vim.fn.stdpath = function(what)
+        return what == "data" and data_dir or original_stdpath(what)
+      end
+      package.loaded["abcql.history"] = nil
+      package.loaded["abcql.history.storage"] = nil
+      History = require("abcql.history")
+      UI.open()
+    end)
+
+    after_each(function()
+      vim.fn.stdpath = original_stdpath
+      vim.fn.delete(data_dir, "rf")
+      package.loaded["abcql.history"] = nil
+      package.loaded["abcql.history.storage"] = nil
+    end)
+
+    --- Save a query like Query.run does and show it as the live result
+    local function run(sql, results, err)
+      local _, id = History.save(sql, "dev", "shop", results, err)
+      UI.display(err or results, nil, { query = sql, history_id = id })
+    end
+
+    local function first_cell()
+      return results_lines()[4]:match("^│ (%S+)")
+    end
+
+    it("shows the previous query on the first step back", function()
+      run("SELECT 1", { headers = { "n" }, rows = { { "1" } }, row_count = 1 })
+      run("SELECT 2", { headers = { "n" }, rows = { { "2" } }, row_count = 1 })
+      UI.history_back()
+      assert.are.equal("1", first_cell())
+      assert.is_not_nil(
+        vim.wo[vim.fn.bufwinid(vim.fn.bufnr("[abcql] Query Results"))].winbar:find("history 1/1", 1, true)
+      )
+      UI.history_forward()
+      assert.are.equal("2", first_cell())
+    end)
+
+    it("comes back to a live error, not the last table shown", function()
+      run("SELECT 1", { headers = { "n" }, rows = { { "1" } }, row_count = 1 })
+      run("SELECT nope", nil, "Unknown column 'nope'")
+      UI.history_back()
+      assert.are.equal("1", first_cell())
+      UI.history_forward()
+      assert.is_not_nil(table.concat(results_lines(), "\n"):find("Unknown column 'nope'", 1, true))
+    end)
+  end)
+
   describe("keys legend", function()
     it("lists every results key in a float that g? closes again", function()
       UI.open()

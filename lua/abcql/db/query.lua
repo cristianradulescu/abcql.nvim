@@ -307,9 +307,9 @@ function Query.run(sql, datasource, opts)
         results.auto_limit = limit
       end
 
-      History.save(sql, datasource.name, database, results, err)
+      local _, history_id = History.save(sql, datasource.name, database, results, err)
 
-      local display_opts = { datasource = datasource, query = sql, sent_query = sent_sql }
+      local display_opts = { datasource = datasource, query = sql, sent_query = sent_sql, history_id = history_id }
       if err then
         UI.display(err, nil, display_opts)
       else

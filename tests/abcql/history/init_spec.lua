@@ -191,6 +191,51 @@ describe("History", function()
     end)
   end)
 
+  describe("set_live", function()
+    local result = { headers = { "id" }, rows = { { "1" } } }
+
+    it("skips the live result's own entry when going back", function()
+      History.save("SELECT 1", "test_ds", "testdb", result, nil)
+      local _, id = History.save("SELECT 2", "test_ds", "testdb", result, nil)
+      History.set_live(id)
+
+      assert.equals("SELECT 1", History.go_back().query)
+      assert.are.same({ 1, 1 }, { History.get_position() })
+      assert.is_nil(History.go_back())
+
+      local entry, is_latest = History.go_forward()
+      assert.is_nil(entry)
+      assert.is_true(is_latest)
+    end)
+
+    it("walks forward over the older entries without showing the live one twice", function()
+      History.save("SELECT 1", "test_ds", "testdb", result, nil)
+      History.save("SELECT 2", "test_ds", "testdb", result, nil)
+      local _, id = History.save("SELECT 3", "test_ds", "testdb", result, nil)
+      History.set_live(id)
+
+      History.go_back()
+      assert.equals("SELECT 1", History.go_back().query)
+      assert.equals("SELECT 2", History.go_forward().query)
+      local _, is_latest = History.go_forward()
+      assert.is_true(is_latest)
+    end)
+
+    it("keeps the newest entry reachable when the live result wasn't saved", function()
+      History.save("SELECT 1", "test_ds", "testdb", result, nil)
+      History.set_live(nil)
+      assert.equals("SELECT 1", History.go_back().query)
+    end)
+
+    it("goes back to the live position", function()
+      History.save("SELECT 1", "test_ds", "testdb", result, nil)
+      History.save("SELECT 2", "test_ds", "testdb", result, nil)
+      History.go_back()
+      History.set_live(nil)
+      assert.is_true(History.is_at_latest())
+    end)
+  end)
+
   describe("go_forward", function()
     it("should return nil and is_latest=true when already at latest", function()
       local entry, is_latest = History.go_forward()

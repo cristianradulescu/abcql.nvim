@@ -2,7 +2,7 @@
 local UI = {}
 
 ---@alias abcql.UI.LayoutOpts { editor_buf: number?, editor_buf_owned: boolean? }
----@alias abcql.UI.DisplayOpts { query: string?, sent_query: string?, datasource: Datasource?, history_position: string?, executed_at: integer? }
+---@alias abcql.UI.DisplayOpts { query: string?, sent_query: string?, datasource: Datasource?, history_position: string?, history_id: string?, executed_at: integer? }
 
 -- Augroup for all UI-related autocmds (WinClosed, BufEnter guards)
 local AUGROUP = vim.api.nvim_create_augroup("abcql_ui", { clear = true })
@@ -56,7 +56,9 @@ local state = {
   results_winbar = "",
   winbar_args = nil,
 
-  -- Display options of the live (non-history) result, restored when leaving history
+  -- The live (non-history) result -- a table or an error string -- and its display options,
+  -- restored when history navigation comes back to the newest
+  live_result = nil,
   live_display_opts = nil,
 
   -- Timer driving the "Running…" indicator
@@ -522,8 +524,8 @@ end
 local function display_history_entry(entry, is_latest)
   local History = require("abcql.history")
   if is_latest then
-    if state.current_results then
-      UI.display(state.current_results, nil, state.live_display_opts)
+    if state.live_result then
+      UI.display(state.live_result, nil, state.live_display_opts)
     end
     return
   end
@@ -545,13 +547,13 @@ local function display_history_entry(entry, is_latest)
 end
 
 --- Navigate to previous query in history and display it
-local function history_go_back()
+function UI.history_back()
   local entry = require("abcql.history").go_back()
   display_history_entry(entry, false)
 end
 
 --- Navigate to next query in history (toward latest) and display it
-local function history_go_forward()
+function UI.history_forward()
   local entry, is_latest = require("abcql.history").go_forward()
   display_history_entry(entry, is_latest)
 end
@@ -724,8 +726,8 @@ local RESULTS_KEYMAPS = {
     title = "History",
     output = true,
     maps = {
-      { { "<C-o>", "[h" }, history_go_back, "previous query in history" },
-      { { "<C-i>", "]h" }, history_go_forward, "next query in history" },
+      { { "<C-o>", "[h" }, UI.history_back, "previous query in history" },
+      { { "<C-i>", "]h" }, UI.history_forward, "next query in history" },
     },
   },
   {
@@ -1652,12 +1654,15 @@ function UI.display(results, results_title, opts)
   if type(results) == "table" then
     state.current_results = results
     state.current_view = require("abcql.ui.view").new()
-    if not opts.history_position then
-      state.live_display_opts = opts
-    end
   else
     state.current_results = nil
     state.current_view = nil
+  end
+  -- A live result (not one replayed from history) becomes the newest history position
+  if not opts.history_position then
+    state.live_result = results
+    state.live_display_opts = opts
+    require("abcql.history").set_live(opts.history_id)
   end
   state.display_opts = opts
 

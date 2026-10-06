@@ -240,41 +240,16 @@ end, {
   desc = "Reload datasources from config files",
 })
 
-local function display_history_entry(entry)
-  local History = require("abcql.history")
-  local UI = require("abcql.ui")
-  local pos, total = History.get_position()
-  local display_opts = {
-    query = entry.query,
-    history_position = string.format("history %d/%d", pos, total),
-    datasource = { name = entry.datasource, adapter = { config = { database = entry.database } } },
-  }
-  UI.display(entry.error or entry.result, nil, display_opts)
-end
-
 --- Navigate to previous query in history
 vim.api.nvim_create_user_command("AbcqlHistoryBack", function()
-  local entry = require("abcql.history").go_back()
-  if entry then
-    display_history_entry(entry)
-  end
+  require("abcql.ui").history_back()
 end, {
   desc = "Navigate to previous query in history",
 })
 
 --- Navigate to next query in history (toward latest)
 vim.api.nvim_create_user_command("AbcqlHistoryForward", function()
-  local UI = require("abcql.ui")
-  local entry, is_latest = require("abcql.history").go_forward()
-
-  if is_latest then
-    local results = UI.get_current_results()
-    if results then
-      UI.display(results)
-    end
-  elseif entry then
-    display_history_entry(entry)
-  end
+  require("abcql.ui").history_forward()
 end, {
   desc = "Navigate to next query in history",
 })

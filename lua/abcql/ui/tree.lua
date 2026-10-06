@@ -740,9 +740,9 @@ function Tree.browse_table_data(node, callback)
 
   Query.execute_async(datasource.adapter, query, function(results, err)
     -- Save to history (both success and error cases)
-    History.save(query, datasource.name, database_name, results, err)
+    local _, history_id = History.save(query, datasource.name, database_name, results, err)
 
-    local display_opts = { query = query, datasource = datasource }
+    local display_opts = { query = query, datasource = datasource, history_id = history_id }
     if err then
       if state.display_fn then
         state.display_fn(err, nil, display_opts)

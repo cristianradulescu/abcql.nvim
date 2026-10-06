@@ -60,6 +60,20 @@ describe("History Storage", function()
       -- IDs should match pattern YYYYMMDD_HHMMSS_XXXXXX
       assert.is_truthy(id1:match("^%d%d%d%d%d%d%d%d_%d%d%d%d%d%d_%d%d%d%d%d%d$"))
     end)
+
+    it("generates ids that sort in creation order", function()
+      local ids = {}
+      for i = 1, 200 do
+        ids[i] = Storage.generate_id()
+      end
+      local sorted = vim.deepcopy(ids)
+      table.sort(sorted)
+      assert.are.same(ids, sorted)
+      assert.are.equal(200, #vim.tbl_keys(vim.iter(ids):fold({}, function(set, id)
+        set[id] = true
+        return set
+      end)))
+    end)
   end)
 
   describe("write_entry and read_entry", function()

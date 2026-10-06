@@ -15,6 +15,9 @@ local state = {
   position = 0,
   -- Currently loaded entry (cached to avoid re-reading file)
   current_entry = nil,
+  -- Entry id of the live result shown at position 0 (see History.set_live); when it is the newest
+  -- entry, navigation skips it so the first step back shows an older query
+  live_id = nil,
 }
 
 --- Refresh the index from disk
@@ -40,6 +43,7 @@ end
 ---@param result table|nil The query result (nil if error)
 ---@param error string|nil Error message (nil if success)
 ---@return boolean success True if saved successfully
+---@return string|nil id Id of the saved entry
 function History.save(query, datasource_name, database, result, error)
   local entry = {
     id = Storage.generate_id(),
@@ -67,7 +71,23 @@ function History.save(query, datasource_name, database, result, error)
   -- Prune old entries
   Storage.prune(MAX_HISTORY_ENTRIES)
 
-  return true
+  return true, entry.id
+end
+
+--- Record the live result now on screen (position 0) and go back to it. `id` is its history
+--- entry, nil when the result wasn't saved (e.g. a refused statement).
+---@param id string|nil
+function History.set_live(id)
+  state.live_id = id
+  state.position = 0
+  state.current_entry = nil
+end
+
+--- 1 when the newest entry is the live result (already shown at position 0), else 0
+---@return number
+local function live_offset()
+  local index = get_index()
+  return (state.live_id ~= nil and index[1] == state.live_id) and 1 or 0
 end
 
 --- Get the total number of history entries
@@ -84,9 +104,9 @@ end
 
 --- Get current position info
 ---@return number position Current position (0 = latest)
----@return number total Total number of history entries
+---@return number total Number of entries reachable by going back (the live result's own entry excluded)
 function History.get_position()
-  return state.position, History.count()
+  return state.position, History.count() - live_offset()
 end
 
 --- Load a history entry by position
@@ -112,14 +132,15 @@ end
 ---@return table|nil entry The history entry to display, or nil if at end
 function History.go_back()
   local index = get_index()
+  local offset = live_offset()
   local new_position = state.position + 1
 
-  if new_position > #index then
+  if new_position + offset > #index then
     vim.notify("No more history", vim.log.levels.INFO)
     return nil
   end
 
-  local entry = load_at_position(new_position)
+  local entry = load_at_position(new_position + offset)
   if entry then
     state.position = new_position
     state.current_entry = entry
@@ -146,7 +167,7 @@ function History.go_forward()
     return nil, true
   end
 
-  local entry = load_at_position(new_position)
+  local entry = load_at_position(new_position + live_offset())
   if entry then
     state.position = new_position
     state.current_entry = entry
@@ -177,6 +198,7 @@ function History.clear()
   state.index = nil
   state.position = 0
   state.current_entry = nil
+  state.live_id = nil
   return deleted
 end
 

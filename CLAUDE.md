@@ -248,8 +248,12 @@ one statement per call) → `UI.set_running` (winbar timer) → auto-LIMIT rewri
 `Backend.invoke`
 (handle kept for `Query.cancel`) → `abcql.history` save → `UI.display`. Results are rendered by
 `abcql.ui.display` (error strings, `write`-type results, and `select`-type tables). History
-navigation (`<C-o>`/`<C-i>`/`[h`/`]h` in the results buffer, or `:AbcqlHistoryBack`/`Forward`)
-replays past query+result/error pairs into the same results buffer; `:AbcqlHistoryPick` is a
+navigation (`<C-o>`/`<C-i>`/`[h`/`]h` in the results buffer, or `:AbcqlHistoryBack`/`Forward`, both
+through `UI.history_back`/`history_forward`) replays past query+result/error pairs into the same
+results buffer. The live result (table or error) is kept in `state.live_result` and registered with
+`History.set_live(display_opts.history_id)`, the id `History.save` returned; while that entry is the
+newest, navigation skips it so the first step back shows an older query. Entry ids are
+`YYYYMMDD_HHMMSS_<microseconds>` and the index orders by them, so they must keep increasing; `:AbcqlHistoryPick` is a
 `vim.ui.select` picker (`History.pick`) that can re-run, insert, or show an entry.
 
 ### Export

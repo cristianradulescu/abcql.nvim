@@ -28,12 +28,24 @@ function Storage.ensure_dir()
   return true, nil
 end
 
---- Generate a unique ID for a history entry
----@return string id Unique identifier (timestamp + high-resolution suffix)
+--- Last id handed out, so ids generated in the same microsecond still increase
+local last_id = nil
+
+--- Generate a unique ID for a history entry. Ids sort in creation order (the index lists them
+--- newest first by name), also for several entries saved within the same second.
+---@return string id Unique identifier: local time plus microseconds, `YYYYMMDD_HHMMSS_uuuuuu`
 function Storage.generate_id()
-  local timestamp = os.date("%Y%m%d_%H%M%S")
-  local hr_suffix = string.format("%06d", vim.uv.hrtime() % 1000000)
-  return timestamp .. "_" .. hr_suffix
+  local sec, usec = vim.uv.gettimeofday()
+  local id = os.date("%Y%m%d_%H%M%S", sec) .. "_" .. string.format("%06d", usec)
+  if last_id and id <= last_id then
+    local prefix, suffix = last_id:match("^(.*_)(%d+)$")
+    local bumped = tonumber(suffix) + 1
+    if bumped <= 999999 then
+      id = prefix .. string.format("%06d", bumped)
+    end
+  end
+  last_id = id
+  return id
 end
 
 --- Get the file path for a history entry
