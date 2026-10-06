@@ -318,6 +318,24 @@ describe("UI", function()
       assert.are.equal(3, #UI.get_current_results().rows)
     end)
 
+    it("follows the foreign key of the cell under the cursor with gf", function()
+      local Follow = require("abcql.db.follow")
+      local original_follow = Follow.follow
+      local called
+      Follow.follow = function(ds, database, sql, results, row_idx, col_idx)
+        called = { ds = ds.name, database = database, sql = sql, row = results.rows[row_idx][col_idx] }
+      end
+      -- A history entry: only the datasource name and database are known
+      UI.display({ headers = { "id", "customer_id" }, rows = { { "1", "42" }, { "2", "43" } }, row_count = 2 }, nil, {
+        query = "SELECT * FROM orders",
+        history_position = "history 1/1",
+        datasource = { name = "dev", adapter = { config = { database = "shop" } } },
+      })
+      press("gf", 5, "customer_id")
+      Follow.follow = original_follow
+      assert.are.same({ ds = "dev", database = "shop", sql = "SELECT * FROM orders", row = "43" }, called)
+    end)
+
     it("resets the view when a new result is displayed", function()
       press("=", 4, "name")
       UI.display({ headers = { "id" }, rows = { { "7" }, { "8" } }, row_count = 2 })

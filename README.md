@@ -410,6 +410,7 @@ trailing `;`/comment and before `FOR UPDATE`/`FOR SHARE`/`LOCK IN SHARE MODE`.
 | `yc`            | Yank the cell under the cursor                        |
 | `yr`            | Yank the row under the cursor (tab-separated)         |
 | `<Tab>` / `<S-Tab>` | Move to the next / previous cell                  |
+| `gf`            | Follow the foreign key of the cell (show the referenced row) |
 | `s`             | Sort by the column under the cursor (asc → desc → off) |
 | `=` / `!`       | Keep / drop rows equal to the cell under the cursor   |
 | `f`             | Filter rows by text (`text` any column, `col:text` one column) |
@@ -424,6 +425,12 @@ Text filters are case-insensitive substrings; numeric columns sort as numbers, N
 ascending. Filters combine with AND and are listed in the footer (`12 of 1,000 rows • filter: …`).
 A new result, or moving through history, starts unsorted and unfiltered. Export and the cell keys
 (`K`, `yc`, `yr`) act on what is shown.
+
+`gf` on a foreign-key cell runs `SELECT * FROM <referenced table> WHERE <referenced column> =
+<value>` as a new query, so it lands in history and `<C-o>` goes back. The key is looked up in the
+schema cache (the one completion uses) among the tables the result's query reads, by column name:
+a column renamed with `AS` or computed by an expression isn't recognised. A composite key needs all
+of its columns in the result. When the column belongs to several keys (a join), you pick one.
 
 ### Datasource Tree
 

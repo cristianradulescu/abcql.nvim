@@ -642,6 +642,26 @@ local function clear_view()
   UI.refresh_view()
 end
 
+--- Follow the foreign key of the cell under the cursor: show the referenced row as a new
+--- result (and history entry, so <C-o> goes back)
+local function follow_foreign_key()
+  local cell = get_cell_at_cursor()
+  if not cell then
+    vim.notify("abcql: no cell under cursor", vim.log.levels.INFO)
+    return
+  end
+  local opts = state.display_opts or {}
+  local shown = opts.datasource
+  -- History entries carry only the datasource name and database
+  local datasource = shown and shown.name and require("abcql.db").connectionRegistry:get_datasource(shown.name)
+  if not datasource then
+    vim.notify("abcql: the datasource of this result is not configured", vim.log.levels.WARN)
+    return
+  end
+  local database = shown.adapter and shown.adapter.config and shown.adapter.config.database
+  require("abcql.db.follow").follow(datasource, database, opts.query, state.current_results, cell.row_idx, cell.col_idx)
+end
+
 --- Keys of the results window, grouped as the `g?` legend shows them. Each entry is
 --- { keys, action, description }; several keys in one entry share the action. Groups marked
 --- `output` are bound in the Output tab too, the others only in the Result tab (the table).
@@ -674,6 +694,7 @@ local RESULTS_KEYMAPS = {
         end,
         "previous cell",
       },
+      { { "gf" }, follow_foreign_key, "follow foreign key (<C-o> goes back)" },
     },
   },
   {

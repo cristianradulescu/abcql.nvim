@@ -260,6 +260,12 @@ function LSP.has_schema(datasource_name)
   return get_instance().cache:has_cache(datasource_name)
 end
 
+--- The schema cache shared by all datasources
+---@return abcql.lsp.Cache
+function LSP.get_cache()
+  return get_instance().cache
+end
+
 --- Check if LSP is running for a buffer
 ---@param bufnr number Buffer number
 ---@return boolean True if LSP is running

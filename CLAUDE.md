@@ -209,7 +209,10 @@ sets the current result and calls the local `render`; `UI.refresh_view` re-rende
 change (`s`/`=`/`!`/`f`/`F`/`X`) keeping the cursor column. Column widths come from all loaded
 rows, with the `▲`/`▼` indicator included in the header text. Results-buffer keys are declared once in
 `RESULTS_KEYMAPS` (grouped `{ keys, action, description }`), which both binds them and builds the
-`g?` legend float — add new keys there, not with a separate `vim.keymap.set`. Export goes through
+`g?` legend float — add new keys there, not with a separate `vim.keymap.set`. `gf` (follow a foreign key) hands the cell, the
+result's query and datasource to `abcql.db.follow`, which matches the column against the FKs of
+the query's tables in the LSP cache (`LSP.get_cache()`) and runs the SELECT of the referenced row
+through `Query.run`. Export goes through
 `UI.get_visible_results()` (the view's rows), not `UI.get_current_results()`. All highlighting goes through extmarks
 (`highlights.add`); `nvim_buf_add_highlight`/`nvim_buf_set_option` are not used. The tree renders
 to `lines, highlights` and keeps its node cache across redraws; `R` (`Tree.reload_node`) drops a
