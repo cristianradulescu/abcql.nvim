@@ -80,17 +80,22 @@ function M.format_duration(ms)
   end
 end
 
+--- Format a count with thousands separators
+--- @param count number
+--- @return string Formatted number (e.g., "1,234,567")
+function M.format_number(count)
+  local formatted = tostring(count):reverse():gsub("(%d%d%d)", "%1,"):reverse()
+  return (formatted:gsub("^,", ""))
+end
+
 --- Format a row count for display
 --- @param count number Number of rows
 --- @return string Formatted row count (e.g., "1 row" or "1,234,567 rows")
 function M.format_row_count(count)
-  local formatted = tostring(count):reverse():gsub("(%d%d%d)", "%1,"):reverse()
-  formatted = formatted:gsub("^,", "")
-
   if count == 1 then
     return "1 row"
   end
-  return formatted .. " rows"
+  return M.format_number(count) .. " rows"
 end
 
 --- Calculate column widths based on headers and data

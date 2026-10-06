@@ -139,6 +139,124 @@ describe("UI", function()
     end)
   end)
 
+  describe("sort and filter", function()
+    local original_input
+
+    local function results_win()
+      return vim.fn.bufwinid(vim.fn.bufnr("[abcql] Query Results"))
+    end
+
+    --- Put the cursor on a column's cell (header line 2, data from line 4) and press keys
+    local function press(keys, line, header)
+      local win = results_win()
+      vim.api.nvim_set_current_win(win)
+      local col = assert(results_lines()[2]:find(header, 1, true)) - 1
+      vim.api.nvim_win_set_cursor(win, { line, col })
+      vim.cmd("normal " .. keys)
+    end
+
+    --- First cell (id) of each data row as rendered
+    local function ids()
+      local out = {}
+      local lines = results_lines()
+      for i = 4, #lines - 2 do
+        table.insert(out, (lines[i]:match("^│ (%S+)")))
+      end
+      return out
+    end
+
+    before_each(function()
+      original_input = vim.ui.input
+      UI.open()
+      UI.display({
+        headers = { "id", "name", "total" },
+        rows = { { "1", "b", "10" }, { "2", "a", "9" }, { "3", "c", "NULL" } },
+        row_count = 3,
+      })
+    end)
+
+    after_each(function()
+      vim.ui.input = original_input
+    end)
+
+    it("sorts by the column under the cursor, cycling asc → desc → off", function()
+      press("s", 2, "total")
+      assert.are.same({ "3", "2", "1" }, ids())
+      assert.is_not_nil(results_lines()[2]:find("total ▲", 1, true))
+      assert.are.equal(" 3 rows • sorted by total ▲", results_lines()[#results_lines()])
+      press("s", 2, "total")
+      assert.are.same({ "1", "2", "3" }, ids())
+      assert.is_not_nil(results_lines()[2]:find("total ▼", 1, true))
+      press("s", 2, "total")
+      assert.are.same({ "1", "2", "3" }, ids())
+      assert.is_nil(results_lines()[2]:find("▼", 1, true))
+    end)
+
+    it("keeps the cursor on the sorted column", function()
+      press("s", 5, "name")
+      local cursor = vim.api.nvim_win_get_cursor(results_win())
+      assert.are.equal(5, cursor[1])
+      assert.are.equal(results_lines()[2]:find("name", 1, true) - 1, cursor[2])
+    end)
+
+    it("resolves cell keys through the sorted rows", function()
+      press("s", 2, "name")
+      press("yc", 4, "name")
+      assert.are.equal("a", vim.fn.getreg('"'))
+      press("yr", 4, "id")
+      assert.are.equal("2\ta\t9", vim.fn.getreg('"'))
+    end)
+
+    it("keeps or drops rows equal to the cell under the cursor", function()
+      press("=", 4, "name")
+      assert.are.same({ "1" }, ids())
+      assert.are.equal(" 1 of 3 rows • filter: name = 'b'", results_lines()[#results_lines()])
+      press("F", 4, "name")
+      press("!", 6, "total")
+      assert.are.same({ "1", "2" }, ids())
+      assert.are.equal(" 2 of 3 rows • filter: total IS NOT NULL", results_lines()[#results_lines()])
+    end)
+
+    it("filters by text from a prompt and clears everything with X", function()
+      vim.ui.input = function(_, on_confirm)
+        on_confirm("name:A")
+      end
+      press("s", 2, "id")
+      press("f", 4, "id")
+      assert.are.same({ "2" }, ids())
+      press("X", 4, "id")
+      assert.are.same({ "1", "2", "3" }, ids())
+      assert.are.equal(" 3 rows", results_lines()[#results_lines()])
+    end)
+
+    it("says when no row matches the filter", function()
+      vim.ui.input = function(_, on_confirm)
+        on_confirm("zzz")
+      end
+      press("f", 4, "id")
+      -- The message is truncated to the (narrow) table width like "No rows returned"
+      assert.is_not_nil(results_lines()[4]:find(" No rows m", 1, true))
+      assert.are.equal(" 0 of 3 rows • filter: contains 'zzz'", results_lines()[#results_lines()])
+    end)
+
+    it("exposes the visible rows for export", function()
+      press("s", 2, "total")
+      press("!", 4, "total")
+      local visible, filtered = UI.get_visible_results()
+      assert.is_true(filtered)
+      assert.are.same({ { "2", "a", "9" }, { "1", "b", "10" } }, visible.rows)
+      assert.are.equal(3, #UI.get_current_results().rows)
+    end)
+
+    it("resets the view when a new result is displayed", function()
+      press("=", 4, "name")
+      UI.display({ headers = { "id" }, rows = { { "7" }, { "8" } }, row_count = 2 })
+      assert.are.equal(" 2 rows", results_lines()[#results_lines()])
+      local _, filtered = UI.get_visible_results()
+      assert.is_false(filtered)
+    end)
+  end)
+
   describe("running indicator", function()
     it("sets and clears the running winbar", function()
       UI.open()

@@ -402,8 +402,19 @@ trailing `;`/comment and before `FOR UPDATE`/`FOR SHARE`/`LOCK IN SHARE MODE`.
 | `yc`            | Yank the cell under the cursor                        |
 | `yr`            | Yank the row under the cursor (tab-separated)         |
 | `<Tab>` / `<S-Tab>` | Move to the next / previous cell                  |
+| `s`             | Sort by the column under the cursor (asc → desc → off) |
+| `=` / `!`       | Keep / drop rows equal to the cell under the cursor   |
+| `f`             | Filter rows by text (`text` any column, `col:text` one column) |
+| `F` / `X`       | Remove the last filter / clear all filters and the sort |
 | `<C-o>` / `<C-i>`, `[h` / `]h` | Older / newer entry in query history   |
 | `<C-c>`         | Cancel the running query                              |
+
+Sorting and filtering work on the loaded rows only, without re-running the query; on a partial
+result (`auto LIMIT` / `max_rows` in the footer) they don't see the rows that weren't fetched.
+Text filters are case-insensitive substrings; numeric columns sort as numbers, NULLs first when
+ascending. Filters combine with AND and are listed in the footer (`12 of 1,000 rows • filter: …`).
+A new result, or moving through history, starts unsorted and unfiltered. Export and the cell keys
+(`K`, `yc`, `yr`) act on what is shown.
 
 ### Datasource Tree
 

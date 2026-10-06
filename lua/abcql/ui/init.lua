@@ -31,6 +31,14 @@ local state = {
   -- Current query results (for export functionality)
   current_results = nil,
 
+  -- Local sort/filter over current_results (abcql.ui.view) and the indices it leaves visible,
+  -- in display order; cell features and export resolve rows through visible_rows
+  current_view = nil,
+  visible_rows = nil,
+
+  -- Display options of the result on screen (live or history), used to re-render it
+  display_opts = nil,
+
   -- Column widths for current results (for cell detection)
   current_widths = nil,
 
@@ -171,8 +179,42 @@ local function cell_byte_ranges()
   return ranges
 end
 
+--- Index of the column whose cell contains a byte offset on a table line
+--- @param col number 0-indexed byte position
+--- @return number|nil
+local function column_at_byte(col)
+  for i, range in ipairs(cell_byte_ranges()) do
+    if col >= range.start and col < range.stop then
+      return i
+    end
+  end
+  return nil
+end
+
+--- Number of data rows currently rendered (rows left visible by the view)
+--- @return number
+local function visible_row_count()
+  return #(state.visible_rows or {})
+end
+
+--- Column under the cursor on any line of the table (header and border lines included)
+--- @return number|nil
+local function column_at_cursor()
+  local results = state.current_results
+  if not results or not results.headers or #results.headers == 0 or not state.table_top_line then
+    return nil
+  end
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  -- top border, header, separator, data rows (or the "no rows" line), bottom border
+  local table_end_line = state.table_top_line + 3 + math.max(visible_row_count(), 1)
+  if cursor[1] < state.table_top_line or cursor[1] > table_end_line then
+    return nil
+  end
+  return column_at_byte(cursor[2])
+end
+
 --- Get the cell content at the current cursor position in the results buffer
---- @return { row_idx: number, col_idx: number, header: string, value: any }|nil Cell info or nil if not on a data cell
+--- @return { row_idx: number, col_idx: number, header: string, value: any }|nil Cell info or nil if not on a data cell; row_idx indexes results.rows
 local function get_cell_at_cursor()
   local results = state.current_results
   local widths = state.current_widths
@@ -187,27 +229,19 @@ local function get_cell_at_cursor()
 
   -- top border, header row, separator, then data rows
   local data_start_line = state.table_top_line + 3
-  local row_count = #(results.rows or {})
-  local data_end_line = data_start_line + row_count - 1
+  local data_end_line = data_start_line + visible_row_count() - 1
 
   if line_num < data_start_line or line_num > data_end_line then
     return nil -- Not on a data row
   end
 
-  local row_idx = line_num - data_start_line + 1
-  local row = results.rows[row_idx]
+  local row_idx = state.visible_rows[line_num - data_start_line + 1]
+  local row = row_idx and results.rows[row_idx]
   if not row then
     return nil
   end
 
-  local col_idx = nil
-  for i, range in ipairs(cell_byte_ranges()) do
-    if col >= range.start and col < range.stop then
-      col_idx = i
-      break
-    end
-  end
-
+  local col_idx = column_at_byte(col)
   if not col_idx then
     return nil
   end
@@ -324,7 +358,7 @@ local function move_cell(direction)
   end
   local ranges = cell_byte_ranges()
   local data_start_line = state.table_top_line + 3
-  local row_count = #(results.rows or {})
+  local row_count = visible_row_count()
   if row_count == 0 then
     return
   end
@@ -415,6 +449,92 @@ local function history_go_forward()
   display_history_entry(entry, is_latest)
 end
 
+--- The view of the displayed table result, or nil (with a notice) when there is no table
+--- @return abcql.View|nil
+local function table_view()
+  local results = state.current_results
+  if not results or not results.headers or #results.headers == 0 or not state.current_view then
+    vim.notify("abcql: no result table to sort or filter", vim.log.levels.INFO)
+    return nil
+  end
+  return state.current_view
+end
+
+--- Cycle the sort (asc → desc → off) on the column under the cursor
+local function sort_by_cursor_column()
+  local view = table_view()
+  if not view then
+    return
+  end
+  local col = column_at_cursor()
+  if not col then
+    vim.notify("abcql: no column under cursor", vim.log.levels.INFO)
+    return
+  end
+  require("abcql.ui.view").cycle_sort(view, col)
+  UI.refresh_view()
+end
+
+--- Keep (or drop, with exclude) the rows whose column equals the cell under the cursor
+--- @param exclude boolean
+local function filter_by_cell(exclude)
+  local view = table_view()
+  if not view then
+    return
+  end
+  local cell = get_cell_at_cursor()
+  if not cell then
+    vim.notify("abcql: no cell under cursor", vim.log.levels.INFO)
+    return
+  end
+  local View = require("abcql.ui.view")
+  View.add_filter(view, View.cell_filter(cell.col_idx, cell.value, exclude))
+  UI.refresh_view()
+end
+
+--- Prompt for a text filter (`text` or `col:text`)
+local function filter_by_text()
+  local view = table_view()
+  if not view then
+    return
+  end
+  vim.ui.input({ prompt = "Filter (text or column:text): " }, function(input)
+    local View = require("abcql.ui.view")
+    -- The result may have changed while the prompt was open
+    if state.current_view ~= view then
+      return
+    end
+    local filter = View.parse_text_filter(input, state.current_results.headers)
+    if filter then
+      View.add_filter(view, filter)
+      UI.refresh_view()
+    end
+  end)
+end
+
+--- Remove the most recently added filter
+local function pop_filter()
+  local view = table_view()
+  if not view then
+    return
+  end
+  if require("abcql.ui.view").pop_filter(view) then
+    UI.refresh_view()
+  else
+    vim.notify("abcql: no filter to remove", vim.log.levels.INFO)
+  end
+end
+
+--- Drop all filters and the sort
+local function clear_view()
+  local view = table_view()
+  if not view then
+    return
+  end
+  require("abcql.ui.view").clear(view)
+  UI.refresh_view()
+end
+
 --- Setup keymaps for the results buffer
 --- @param buf number Buffer ID
 local function setup_results_keymaps(buf)
@@ -432,6 +552,16 @@ local function setup_results_keymaps(buf)
   map("<S-Tab>", function()
     move_cell(-1)
   end, "abcql: previous cell")
+  map("s", sort_by_cursor_column, "abcql: sort by column (asc/desc/off)")
+  map("=", function()
+    filter_by_cell(false)
+  end, "abcql: keep rows equal to this cell")
+  map("!", function()
+    filter_by_cell(true)
+  end, "abcql: drop rows equal to this cell")
+  map("f", filter_by_text, "abcql: filter rows by text")
+  map("F", pop_filter, "abcql: remove last filter")
+  map("X", clear_view, "abcql: clear filters and sort")
   map("<C-o>", history_go_back, "abcql: previous query in history")
   map("<C-i>", history_go_forward, "abcql: next query in history")
   map("[h", history_go_back, "abcql: previous query in history")
@@ -1019,11 +1149,12 @@ end
 --- Write lines to the results buffer and reset the view to the top-left
 --- @param buf number
 --- @param lines string[]
-local function set_results_lines(buf, lines)
+--- @param keep_position boolean|nil Leave the cursor/scroll position alone (re-rendering the same result)
+local function set_results_lines(buf, lines, keep_position)
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
-  if state.results_win and vim.api.nvim_win_is_valid(state.results_win) then
+  if not keep_position and state.results_win and vim.api.nvim_win_is_valid(state.results_win) then
     vim.api.nvim_win_set_cursor(state.results_win, { 1, 0 })
     vim.api.nvim_win_call(state.results_win, function()
       vim.cmd("normal! zt0")
@@ -1031,31 +1162,14 @@ local function set_results_lines(buf, lines)
   end
 end
 
---- Display query results or errors in the results buffer
---- @param results QueryResult|string Results object with columns, rows, and optional metadata, or error message string
---- @param results_title string? Optional buffer name override (kept for backwards compatibility)
---- @param opts abcql.UI.DisplayOpts? Display options: query shown above the results, datasource for the winbar
-function UI.display(results, results_title, opts)
-  opts = opts or {}
-  stop_running_timer()
-
-  if not UI.is_valid() then
-    UI.open()
-    if not UI.is_valid() then
-      -- The user declined to create an editor buffer; nothing to draw into.
-      return
-    end
-  end
-  UI.show_results()
-
-  local buf = state.results_buf
-  if not buf or not vim.api.nvim_buf_is_valid(buf) then
-    return
-  end
-  if results_title ~= nil then
-    pcall(vim.api.nvim_buf_set_name, buf, results_title)
-  end
-
+--- Render a result (or error string) into the results buffer, through state.current_view for tables.
+--- Updates the table geometry (current_widths, table_top_line, visible_rows) but not which result
+--- is current.
+--- @param buf number
+--- @param results QueryResult|string
+--- @param opts abcql.UI.DisplayOpts
+--- @param keep_position boolean|nil Keep the cursor/scroll position (re-rendering the same result)
+local function render(buf, results, opts, keep_position)
   -- Clear previous highlights
   local highlights = require("abcql.ui.highlights")
   highlights.clear(buf)
@@ -1077,17 +1191,11 @@ function UI.display(results, results_title, opts)
     query_line_count = #lines
   end
 
-  -- Store current results for export (only if not an error string)
-  if type(results) == "table" then
-    state.current_results = results
-    if not opts.history_position then
-      state.live_display_opts = opts
-    end
-  else
-    state.current_results = nil
+  state.table_top_line = nil
+  state.visible_rows = nil
+  if type(results) ~= "table" then
     state.current_widths = nil
   end
-  state.table_top_line = nil
 
   -- Handle error messages (when results is a string)
   if type(results) == "string" then
@@ -1176,23 +1284,29 @@ function UI.display(results, results_title, opts)
   end
 
   local format = require("abcql.ui.format")
-  local rows = results.rows or {}
-  local widths = format.calculate_column_widths(results.headers, rows, ui_config().cell_max_width)
+  local View = require("abcql.ui.view")
+  local all_rows = results.rows or {}
+  local view = state.current_view
+  local visible = View.compute(results, view)
+  local rows = View.rows(results, visible)
+  -- The sort indicator is part of the header text, so the widths account for it
+  local header_labels = View.header_labels(results.headers, view)
+  -- Widths come from every loaded row, so the layout doesn't jump while filtering
+  local widths = format.calculate_column_widths(header_labels, all_rows, ui_config().cell_max_width)
 
-  -- Store widths for cell detection (used by the K popup and cell motions)
+  -- Store geometry for cell detection (used by the K popup and cell motions)
   state.current_widths = widths
   state.table_top_line = #lines + 1
+  state.visible_rows = visible
 
   table.insert(lines, format.create_top_border(widths))
-  table.insert(lines, format.format_row(results.headers, widths))
+  table.insert(lines, format.format_row(header_labels, widths))
   table.insert(lines, format.create_separator(widths))
 
   if #rows == 0 then
-    local inner_width = vim.fn.strdisplaywidth(format.format_row(results.headers, widths)) - 2
-    table.insert(
-      lines,
-      format.border.vertical .. format.pad_right(" No rows returned", inner_width) .. format.border.vertical
-    )
+    local inner_width = vim.fn.strdisplaywidth(format.format_row(header_labels, widths)) - 2
+    local message = #all_rows == 0 and " No rows returned" or " No rows match the filter"
+    table.insert(lines, format.border.vertical .. format.pad_right(message, inner_width) .. format.border.vertical)
     table.insert(lines, format.create_bottom_border(widths))
   else
     for _, row in ipairs(rows) do
@@ -1204,15 +1318,23 @@ function UI.display(results, results_title, opts)
   -- Track where the table ends for footer highlighting
   local table_end_line = #lines
 
-  -- Compact footer: "2 rows • 45ms"
+  -- Compact footer: "2 rows • 45ms", or "12 of 1,000 rows • filter: … • sorted by … ▲" with a view
   local footer_parts = {}
+  local filtered = view ~= nil and #view.filters > 0
+  local loaded = format.format_row_count(#all_rows)
   if results.truncated then
-    table.insert(footer_parts, string.format("showing first %s (max_rows limit)", format.format_row_count(#rows)))
-  else
-    table.insert(footer_parts, format.format_row_count(#rows))
+    loaded = string.format("first %s (max_rows limit)", loaded)
   end
+  if filtered then
+    table.insert(footer_parts, string.format("%s of %s", format.format_number(#rows), loaded))
+  elseif results.truncated then
+    table.insert(footer_parts, "showing " .. loaded)
+  else
+    table.insert(footer_parts, loaded)
+  end
+  vim.list_extend(footer_parts, View.describe(view, results.headers))
   -- The statement was sent with an added LIMIT: at that count the result may be partial.
-  local limit_hit = results.auto_limit ~= nil and #rows >= results.auto_limit
+  local limit_hit = results.auto_limit ~= nil and #all_rows >= results.auto_limit
   if results.auto_limit then
     table.insert(footer_parts, string.format("auto LIMIT %d", results.auto_limit))
   end
@@ -1222,13 +1344,13 @@ function UI.display(results, results_title, opts)
   local summary = table.concat(footer_parts, " • ")
   table.insert(lines, " " .. summary)
 
-  set_results_lines(buf, lines)
+  set_results_lines(buf, lines, keep_position)
 
   -- Apply syntax highlighting
   if query_line_count > 0 then
     highlights.apply_query_highlights(buf, query_line_count)
   end
-  highlights.apply_highlights(buf, results, query_line_count, widths)
+  highlights.apply_highlights(buf, { headers = header_labels, rows = rows }, query_line_count, widths)
 
   -- Highlight footer lines
   for i = table_end_line, #lines - 1 do
@@ -1239,10 +1361,93 @@ function UI.display(results, results_title, opts)
   set_results_winbar(build_results_winbar(opts, summary, summary_hl))
 end
 
+--- Display query results or errors in the results buffer
+--- @param results QueryResult|string Results object with columns, rows, and optional metadata, or error message string
+--- @param results_title string? Optional buffer name override (kept for backwards compatibility)
+--- @param opts abcql.UI.DisplayOpts? Display options: query shown above the results, datasource for the winbar
+function UI.display(results, results_title, opts)
+  opts = opts or {}
+  stop_running_timer()
+
+  if not UI.is_valid() then
+    UI.open()
+    if not UI.is_valid() then
+      -- The user declined to create an editor buffer; nothing to draw into.
+      return
+    end
+  end
+  UI.show_results()
+
+  local buf = state.results_buf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  if results_title ~= nil then
+    pcall(vim.api.nvim_buf_set_name, buf, results_title)
+  end
+
+  -- Store current results for export (only if not an error string); a new result starts with
+  -- no sort or filter
+  if type(results) == "table" then
+    state.current_results = results
+    state.current_view = require("abcql.ui.view").new()
+    if not opts.history_position then
+      state.live_display_opts = opts
+    end
+  else
+    state.current_results = nil
+    state.current_view = nil
+  end
+  state.display_opts = opts
+
+  render(buf, results, opts)
+end
+
+--- Re-render the displayed result after its view (sort/filter) changed, keeping the cursor on
+--- the same line and column
+function UI.refresh_view()
+  local buf = state.results_buf
+  if not state.current_results or not state.current_view or not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  local win = state.results_win
+  local has_win = win ~= nil and vim.api.nvim_win_is_valid(win)
+  local saved, col_idx
+  if has_win then
+    saved = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+    col_idx = column_at_byte(saved.col) -- before re-rendering: uses the old widths
+  end
+
+  render(buf, state.current_results, state.display_opts or {}, true)
+
+  if has_win then
+    local line = math.min(saved.lnum, vim.api.nvim_buf_line_count(buf))
+    local range = col_idx and cell_byte_ranges()[col_idx]
+    vim.api.nvim_win_call(win, function()
+      vim.fn.winrestview({ topline = saved.topline, leftcol = saved.leftcol })
+    end)
+    vim.api.nvim_win_set_cursor(win, { line, range and range.start or 0 })
+  end
+end
+
 --- Get the current query results (for export functionality)
 --- @return QueryResult|nil The current results, or nil if none available
 function UI.get_current_results()
   return state.current_results
+end
+
+--- Get the displayed result as the user sees it: the current results with only the rows left
+--- visible by the sort/filter view, in display order
+--- @return QueryResult|nil results
+--- @return boolean filtered True when the view hides some of the loaded rows
+function UI.get_visible_results()
+  local results = state.current_results
+  if not results or not state.visible_rows then
+    return results, false
+  end
+  local visible = vim.tbl_extend("force", {}, results)
+  visible.rows = require("abcql.ui.view").rows(results, state.visible_rows)
+  return visible, #visible.rows < #(results.rows or {})
 end
 
 --- Whether the results panel is currently visible

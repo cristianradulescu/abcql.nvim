@@ -100,7 +100,8 @@ end
 --- @return ExportResult Result object
 function Export.export_current(format, opts)
   local UI = require("abcql.ui")
-  local current_results = UI.get_current_results()
+  -- Export what the user sees: the sorted/filtered view, not the full loaded result
+  local current_results, filtered = UI.get_visible_results()
 
   if not current_results then
     return {
@@ -113,7 +114,11 @@ function Export.export_current(format, opts)
 
   -- Notify user of the result
   if result.success then
-    vim.notify(string.format("Exported to: %s", result.filepath), vim.log.levels.INFO)
+    local note = ""
+    if filtered then
+      note = string.format(" (filtered view: %d of %d rows)", #current_results.rows, #UI.get_current_results().rows)
+    end
+    vim.notify(string.format("Exported to: %s%s", result.filepath, note), vim.log.levels.INFO)
   else
     vim.notify(string.format("Export failed: %s", result.error), vim.log.levels.ERROR)
   end
