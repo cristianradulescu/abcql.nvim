@@ -400,26 +400,11 @@ function Query.execute_query_at_cursor()
   run_in_current_buffer(Query.get_query_at_cursor())
 end
 
---- Execute the visually selected text as a single statement
-function Query.execute_selection()
-  local sql = Query.get_selection_query()
-  if sql == "" then
-    vim.notify("abcql: no selection", vim.log.levels.WARN)
-    return
-  end
-  run_in_current_buffer(sql)
-end
-
---- Execute every statement in the current buffer sequentially, stopping at
---- the first error. The results panel ends up showing the last statement.
-function Query.execute_buffer()
-  local bufnr = vim.api.nvim_get_current_buf()
-  local statements = Query.get_statements(bufnr)
-  if #statements == 0 then
-    vim.notify("abcql: no statements in buffer", vim.log.levels.WARN)
-    return
-  end
-
+--- Run statements sequentially, stopping at the first error. The results
+--- panel ends up showing the last statement.
+--- @param bufnr number Buffer whose datasource runs them
+--- @param statements abcql.Statement[]
+local function run_statements(bufnr, statements)
   require("abcql.db").ensure_datasource(bufnr, function(datasource)
     if not datasource then
       return
@@ -506,6 +491,40 @@ function Query.execute_buffer()
       run_all()
     end
   end)
+end
+
+--- Execute the visually selected text. Several statements run one at a time
+--- (the backend takes a single statement per call), like a buffer run.
+function Query.execute_selection()
+  local sql = Query.get_selection_query()
+  if sql == "" then
+    vim.notify("abcql: no selection", vim.log.levels.WARN)
+    return
+  end
+  local statements = Statements.scan(sql)
+  if #statements <= 1 then
+    run_in_current_buffer(sql)
+    return
+  end
+  -- Report buffer line numbers, not selection-relative ones.
+  local offset = vim.fn.getpos("'<")[2] - 1
+  for _, stmt in ipairs(statements) do
+    stmt.start_line = stmt.start_line + offset
+    stmt.end_line = stmt.end_line + offset
+  end
+  run_statements(vim.api.nvim_get_current_buf(), statements)
+end
+
+--- Execute every statement in the current buffer sequentially, stopping at
+--- the first error. The results panel ends up showing the last statement.
+function Query.execute_buffer()
+  local bufnr = vim.api.nvim_get_current_buf()
+  local statements = Query.get_statements(bufnr)
+  if #statements == 0 then
+    vim.notify("abcql: no statements in buffer", vim.log.levels.WARN)
+    return
+  end
+  run_statements(bufnr, statements)
 end
 
 return Query

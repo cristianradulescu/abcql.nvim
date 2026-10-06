@@ -239,8 +239,9 @@ declining runs nothing), all of which go through `Database.ensure_datasource` an
 `Query.run`. `Query.run` is the single execution path: readonly guard → confirmation float (policy: datasource `confirm` >
 `query.confirm`, default only for writes; a dangerous statement always gets the float, with the
 reason in its title, whatever the policy or `opts.confirm`, unless `opts.dangerous_confirmed`;
-`execute_selection` sends the whole selection through one `Query.run`, which checks every
-statement in it before anything runs) → `UI.set_running` (winbar timer) → auto-LIMIT rewrite →
+a single-statement selection goes through one `Query.run`; a selection holding several statements
+is split with `Statements.scan` and run as a batch like `execute_buffer`, since the backend takes
+one statement per call) → `UI.set_running` (winbar timer) → auto-LIMIT rewrite →
 `Backend.invoke`
 (handle kept for `Query.cancel`) → `abcql.history` save → `UI.display`. Results are rendered by
 `abcql.ui.display` (error strings, `write`-type results, and `select`-type tables). History

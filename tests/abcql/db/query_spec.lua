@@ -322,6 +322,22 @@ describe("Query", function()
         assert.is_false(floating())
         assert.are.same({ "INSERT INTO a VALUES (1)", "UPDATE b SET x = 1", "DELETE FROM c WHERE id = 1" }, ran)
       end)
+
+      it("runs a multi-statement selection one statement at a time", function()
+        run_buffer("never")
+        vim.api.nvim_win_close(0, true)
+        ran = {}
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+          "SELECT * FROM a LIMIT 100;",
+          "SELECT * FROM b LIMIT 100;",
+          "SELECT * FROM c LIMIT 100;",
+        })
+        vim.api.nvim_win_set_cursor(0, { 1, 0 })
+        vim.cmd("normal! Vjj\27")
+        Query.execute_selection()
+        assert.is_false(floating())
+        assert.are.same({ "SELECT * FROM a LIMIT 100", "SELECT * FROM b LIMIT 100", "SELECT * FROM c LIMIT 100" }, ran)
+      end)
     end)
 
     it("forces the confirmation float even with confirm policy never", function()
