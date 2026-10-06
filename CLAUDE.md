@@ -196,8 +196,15 @@ Context lives in winbars, not notifications: the editor window's winbar shows th
 datasource (`Database.winbar_text`, re-applied on `BufWinEnter` since `winbar` is window-local) and
 the results window's winbar shows datasource/db • statement • row count/duration (or the running
 timer). Cell-level features in the results buffer (`K` popup, `yc`/`yr`, `<Tab>` motions) derive
-byte offsets from `state.current_widths` and `state.table_top_line`, so anything that changes the
-table's rendering must keep those in sync. All highlighting goes through extmarks
+byte offsets from `state.current_widths` and `state.table_top_line`, and map a data line to a row
+through `state.visible_rows`, so anything that changes the table's rendering must keep those in
+sync. Tables render through `abcql.ui.view`, a pure module that turns `state.current_view`
+(single-column sort + AND-ed filters, reset on every `UI.display`) into indices into
+`results.rows`; `state.current_results` stays exactly what the server returned. `UI.display`
+sets the current result and calls the local `render`; `UI.refresh_view` re-renders after a view
+change (`s`/`=`/`!`/`f`/`F`/`X`) keeping the cursor column. Column widths come from all loaded
+rows, with the `▲`/`▼` indicator included in the header text. Export goes through
+`UI.get_visible_results()` (the view's rows), not `UI.get_current_results()`. All highlighting goes through extmarks
 (`highlights.add`); `nvim_buf_add_highlight`/`nvim_buf_set_option` are not used. The tree renders
 to `lines, highlights` and keeps its node cache across redraws; `R` (`Tree.reload_node`) drops a
 subtree and refetches, `Tree.reset()` drops everything (called from `:AbcqlDatasourceReload`).
