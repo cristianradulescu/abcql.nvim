@@ -19,6 +19,7 @@ Database.connectionRegistry = ConnectionRegistry.new()
 local MAGIC_COMMENT_LINES = 10
 
 local AUGROUP = vim.api.nvim_create_augroup("abcql_datasource", { clear = true })
+local OPEN_AUGROUP = vim.api.nvim_create_augroup("abcql_datasource_open", { clear = true })
 
 --- Setup the database module with configuration
 --- @param config abcql.Config
@@ -276,6 +277,35 @@ function Database.resolve_datasource_name(bufnr)
 
   return nil, nil
 end
+
+--- Attach a freshly opened SQL buffer when it names its datasource: a
+--- `-- abcql: <name>` comment or the configured default. The "last used" and
+--- prompt fallbacks are left to `ensure_datasource` at query time.
+--- @param bufnr number
+function Database.attach_on_open(bufnr)
+  if not vim.api.nvim_buf_is_valid(bufnr) or Database.buffer_datasources[bufnr] then
+    return
+  end
+  local name, reason = Database.resolve_datasource_name(bufnr)
+  if not name or (reason ~= "file comment" and reason ~= "default") then
+    return
+  end
+  Database.attach_datasource(bufnr, name, function(_, err)
+    if err then
+      vim.notify("abcql: " .. err, vim.log.levels.ERROR)
+    end
+  end)
+end
+
+vim.api.nvim_create_autocmd("FileType", {
+  group = OPEN_AUGROUP,
+  pattern = "sql",
+  callback = function(args)
+    vim.schedule(function()
+      Database.attach_on_open(args.buf)
+    end)
+  end,
+})
 
 --- Ensure a buffer has a datasource, auto-attaching or prompting as needed.
 --- @param bufnr number

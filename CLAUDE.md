@@ -274,3 +274,5 @@ AbcqlDatasourceAttached` autocmd (the tree listens to mark the active datasource
 an attachment are resolved lazily by `Database.ensure_datasource` when a query runs: `-- abcql:
 <name>` comment in the first 10 lines → configured `default` → last used datasource (if
 `query.auto_attach`) → `vim.ui.select` prompt.
+A `FileType sql` autocmd (`Database.attach_on_open`) attaches on open, but only for the comment or
+the configured `default` — never the last-used/prompt fallbacks, which stay lazy.

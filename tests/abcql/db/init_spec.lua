@@ -215,4 +215,37 @@ describe("Database datasource resolution", function()
       assert.are.equal("dev", picked.name)
     end)
   end)
+  describe("attach_on_open", function()
+    it("attaches from a file comment", function()
+      Database.last_datasource_name = nil
+      local buf = new_buffer({ "-- abcql: prod", "select 1;" })
+      Database.attach_on_open(buf)
+      assert.are.equal("prod", Database.get_active_datasource(buf).name)
+    end)
+
+    it("attaches the configured default", function()
+      Database.default_datasource_name = "dev"
+      local buf = new_buffer({ "select 1;" })
+      Database.attach_on_open(buf)
+      assert.are.equal("dev", Database.get_active_datasource(buf).name)
+    end)
+
+    it("leaves buffers alone when only a last used datasource is known", function()
+      Database.default_datasource_name = nil
+      Database.last_datasource_name = "dev"
+      local buf = new_buffer({ "select 1;" })
+      Database.attach_on_open(buf)
+      assert.is_nil(Database.get_active_datasource(buf))
+    end)
+
+    it("runs on FileType sql", function()
+      Database.default_datasource_name = nil
+      local buf = new_buffer({ "-- abcql: dev" })
+      vim.bo[buf].filetype = "sql"
+      vim.wait(200, function()
+        return Database.get_active_datasource(buf) ~= nil
+      end)
+      assert.are.equal("dev", Database.get_active_datasource(buf).name)
+    end)
+  end)
 end)
