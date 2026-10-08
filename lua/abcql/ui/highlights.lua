@@ -58,6 +58,10 @@ function M.setup()
   -- Status indicators
   vim.api.nvim_set_hl(0, "AbcqlSuccess", { link = "DiagnosticOk", default = true })
   vim.api.nvim_set_hl(0, "AbcqlError", { link = "DiagnosticError", default = true })
+
+  -- Background of the last executed statement in the editor
+  vim.api.nvim_set_hl(0, "AbcqlRunOk", { link = "DiffAdd", default = true })
+  vim.api.nvim_set_hl(0, "AbcqlRunError", { link = "DiffDelete", default = true })
   vim.api.nvim_set_hl(0, "AbcqlWarning", { link = "DiagnosticWarn", default = true })
 
   -- History query display

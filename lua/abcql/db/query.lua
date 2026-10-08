@@ -1,6 +1,7 @@
 local Backend = require("abcql.backend")
 local Limit = require("abcql.db.limit")
 local Statements = require("abcql.db.statements")
+local Status = require("abcql.ui.status")
 
 ---@class abcql.db.Query
 local Query = {}
@@ -255,7 +256,8 @@ end
 --- A dangerous statement (UPDATE/DELETE without WHERE, TRUNCATE) is always
 --- confirmed, even with `opts.confirm = false`, unless the lint is disabled.
 --- `opts.dangerous_confirmed` means the caller already confirmed it (a buffer run's upfront prompt).
---- @param opts? { confirm?: boolean, dangerous_confirmed?: boolean, on_done?: fun(results: QueryResult|nil, err: string|nil) }
+--- `opts.mark` (`abcql.ui.StatusMark`) is the statement's line range, coloured by outcome.
+--- @param opts? { confirm?: boolean, dangerous_confirmed?: boolean, mark?: abcql.ui.StatusMark, on_done?: fun(results: QueryResult|nil, err: string|nil) }
 function Query.run(sql, datasource, opts)
   opts = opts or {}
   local UI = require("abcql.ui")
@@ -281,6 +283,7 @@ function Query.run(sql, datasource, opts)
 
   if datasource.readonly and Statements.is_write(sql) then
     local err = string.format("Datasource '%s' is readonly; refusing to run a write statement.", datasource.name)
+    Status.done(opts.mark, err)
     UI.display(err, nil, { query = sql, datasource = datasource })
     finish(nil, err)
     return
@@ -291,6 +294,7 @@ function Query.run(sql, datasource, opts)
     local job = { query = sql, datasource = datasource, started = vim.uv.hrtime() }
     running = job
     UI.set_running(sql, datasource)
+    Status.running(opts.mark)
 
     -- A statement bounded by a LIMIT (its own or the auto-LIMIT) is returned
     -- in full; max_rows only caps statements without one.
@@ -303,6 +307,7 @@ function Query.run(sql, datasource, opts)
         running = nil
       end
       UI.clear_running()
+      Status.done(opts.mark, err)
       if results and limit_status == "added" then
         results.auto_limit = limit
       end
@@ -381,7 +386,8 @@ end
 --- Resolve the buffer's datasource, then run the given SQL.
 --- @param sql string
 --- @param opts? table Passed through to Query.run
-local function run_in_current_buffer(sql, opts)
+--- @param mark? abcql.ui.StatusMark Lines to colour with the run status
+local function run_in_current_buffer(sql, opts, mark)
   if Statements.is_blank(sql) then
     vim.notify("abcql: no query at cursor", vim.log.levels.WARN)
     return
@@ -391,13 +397,19 @@ local function run_in_current_buffer(sql, opts)
     if not datasource then
       return
     end
-    Query.run(sql, datasource, opts)
+    Query.run(sql, datasource, vim.tbl_extend("force", { mark = mark }, opts or {}))
   end)
 end
 
 --- Execute the SQL statement located at the current cursor position
 function Query.execute_query_at_cursor()
-  run_in_current_buffer(Query.get_query_at_cursor())
+  local bufnr = vim.api.nvim_get_current_buf()
+  local stmt = Statements.at_line(Query.get_statements(bufnr), vim.api.nvim_win_get_cursor(0)[1])
+  run_in_current_buffer(
+    stmt and stmt.text or "",
+    nil,
+    stmt and { bufnr = bufnr, start_line = stmt.start_line, end_line = stmt.end_line }
+  )
 end
 
 --- Run statements sequentially, stopping at the first error. The results
@@ -452,6 +464,7 @@ local function run_statements(bufnr, statements)
           return
         end
         Query.run(stmt.text, datasource, {
+          mark = { bufnr = bufnr, start_line = stmt.start_line, end_line = stmt.end_line },
           confirm = false,
           dangerous_confirmed = #dangers > 0,
           on_done = function(_, err)
@@ -503,7 +516,11 @@ function Query.execute_selection()
   end
   local statements = Statements.scan(sql)
   if #statements <= 1 then
-    run_in_current_buffer(sql)
+    run_in_current_buffer(sql, nil, {
+      bufnr = vim.api.nvim_get_current_buf(),
+      start_line = vim.fn.getpos("'<")[2],
+      end_line = vim.fn.getpos("'>")[2],
+    })
     return
   end
   -- Report buffer line numbers, not selection-relative ones.
