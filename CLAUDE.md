@@ -212,7 +212,10 @@ rows, with the `▲`/`▼` indicator included in the header text. Results-buffer
 `g?` legend float — add new keys there, not with a separate `vim.keymap.set`. `gf` (follow a foreign key) hands the cell, the
 result's query and datasource to `abcql.db.follow`, which matches the column against the FKs of
 the query's tables in the LSP cache (`LSP.get_cache()`) and runs the SELECT of the referenced row
-through `Query.run`. Export goes through
+through `Query.run`. The `K` cell popup uses the same matching (`Follow.preview`, silent when
+the column isn't a key or the schema isn't loaded) to append the referenced row (all its
+columns, values cut to the popup width; the `SELECT` goes through `Query.execute_async` with `max_rows = 1`, so it skips
+history) to the popup when the query returns. Export goes through
 `UI.get_visible_results()` (the view's rows), not `UI.get_current_results()`. All highlighting goes through extmarks
 (`highlights.add`); `nvim_buf_add_highlight`/`nvim_buf_set_option` are not used. The tree renders
 to `lines, highlights` and keeps its node cache across redraws; `R` (`Tree.reload_node`) drops a

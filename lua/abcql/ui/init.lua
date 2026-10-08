@@ -372,7 +372,21 @@ local function cell_to_string(value)
   return tostring(value)
 end
 
---- Show a floating popup with the full cell content
+--- Configured datasource of the shown result and the database its query ran in
+--- @return Datasource|nil datasource
+--- @return string|nil database
+local function result_datasource()
+  local shown = (state.display_opts or {}).datasource
+  -- History entries carry only the datasource name and database
+  local datasource = shown and shown.name and require("abcql.db").connectionRegistry:get_datasource(shown.name)
+  if not datasource then
+    return nil, nil
+  end
+  return datasource, shown.adapter and shown.adapter.config and shown.adapter.config.database
+end
+
+--- Show a floating popup with the full cell content, followed by the row its foreign key
+--- references (fetched asynchronously, appended when it arrives)
 local function show_cell_popup()
   local cell = get_cell_at_cursor()
 
@@ -424,6 +438,26 @@ local function show_cell_popup()
     close()
     vim.notify("abcql: cell yanked", vim.log.levels.INFO)
   end, { buffer = buf, desc = "Yank full cell value" })
+
+  local datasource, database = result_datasource()
+  if datasource and value ~= "NULL" then
+    local results = state.current_results
+    local query = (state.display_opts or {}).query
+    local Follow = require("abcql.db.follow")
+    Follow.preview(datasource, database, query, results, cell.row_idx, cell.col_idx, width, function(ref, names)
+      if not vim.api.nvim_buf_is_valid(buf) then
+        return
+      end
+      -- 0-based line of the heading, after the blank separator line
+      local start = vim.api.nvim_buf_line_count(buf) + 1
+      vim.api.nvim_buf_set_lines(buf, -1, -1, false, vim.list_extend({ "" }, ref))
+      local highlights = require("abcql.ui.highlights")
+      highlights.add(buf, "Title", start, 0, -1)
+      for _, name in ipairs(names) do
+        highlights.add(buf, "AbcqlHeader", start + name.line - 1, name.col_start, name.col_end)
+      end
+    end)
+  end
 end
 
 --- Yank the cell under the cursor to the unnamed and clipboard registers
@@ -652,16 +686,13 @@ local function follow_foreign_key()
     vim.notify("abcql: no cell under cursor", vim.log.levels.INFO)
     return
   end
-  local opts = state.display_opts or {}
-  local shown = opts.datasource
-  -- History entries carry only the datasource name and database
-  local datasource = shown and shown.name and require("abcql.db").connectionRegistry:get_datasource(shown.name)
+  local datasource, database = result_datasource()
   if not datasource then
     vim.notify("abcql: the datasource of this result is not configured", vim.log.levels.WARN)
     return
   end
-  local database = shown.adapter and shown.adapter.config and shown.adapter.config.database
-  require("abcql.db.follow").follow(datasource, database, opts.query, state.current_results, cell.row_idx, cell.col_idx)
+  local query = (state.display_opts or {}).query
+  require("abcql.db.follow").follow(datasource, database, query, state.current_results, cell.row_idx, cell.col_idx)
 end
 
 --- Keys of the results window, grouped as the `g?` legend shows them. Each entry is
@@ -679,7 +710,7 @@ local RESULTS_KEYMAPS = {
   {
     title = "Cells",
     maps = {
-      { { "K", "<CR>" }, show_cell_popup, "show full cell content (y yanks it)" },
+      { { "K", "<CR>" }, show_cell_popup, "show full cell content and the row a foreign key references (y yanks it)" },
       { { "yc" }, yank_cell, "yank cell" },
       { { "yr" }, yank_row, "yank row (tab-separated)" },
       {

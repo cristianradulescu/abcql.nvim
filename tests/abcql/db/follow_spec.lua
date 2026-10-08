@@ -159,6 +159,104 @@ describe("Follow", function()
     end)
   end)
 
+  describe("preview_lines", function()
+    local target
+
+    before_each(function()
+      target = Follow.targets(cache, "dev", "shop", "SELECT * FROM orders", { "id", "customer_id" }, 2)[1]
+    end)
+
+    it("lists every column of the referenced row, aligned", function()
+      local result = {
+        headers = { "id", "code", "a", "b", "c", "d" },
+        rows = { { "42", "multi\nline", "1", vim.NIL, "3", "4" } },
+      }
+      assert.are.same({
+        "→ orders.customer_id → Customers.id",
+        "  id    42",
+        "  code  multi ↵ line",
+        "  a     1",
+        "  b     NULL",
+        "  c     3",
+        "  d     4",
+      }, Follow.preview_lines(target, result, nil, 80))
+    end)
+
+    it("cuts values so each line fits the width", function()
+      local result = { headers = { "id", "title" }, rows = { { "42", "Lorem ipsum dolor sit amet" } } }
+      local lines = Follow.preview_lines(target, result, nil, 20)
+      assert.are.same({ "  id     42", "  title  Lorem ipsu…" }, { lines[2], lines[3] })
+      assert.are.equal(20, vim.fn.strdisplaywidth(lines[3]))
+    end)
+
+    it("returns the byte range of each column name", function()
+      local result = { headers = { "id", "name" }, rows = { { "42", "Alice" } } }
+      local _, names = Follow.preview_lines(target, result, nil, 80)
+      assert.are.same({
+        { line = 2, col_start = 2, col_end = 4 },
+        { line = 3, col_start = 2, col_end = 6 },
+      }, names)
+    end)
+
+    it("says when no row is referenced", function()
+      local lines = Follow.preview_lines(target, { headers = { "id" }, rows = {} }, nil, 80)
+      assert.are.equal("  (no referenced row found)", lines[2])
+    end)
+
+    it("shows the error", function()
+      local lines = Follow.preview_lines(target, nil, "boom\nagain", 80)
+      assert.are.equal("  boom again", lines[2])
+    end)
+  end)
+
+  describe("preview", function()
+    local LSP, Query
+    local original_has_schema, original_get_cache, original_execute
+
+    before_each(function()
+      LSP, Query = require("abcql.lsp"), require("abcql.db.query")
+      original_has_schema, original_get_cache, original_execute = LSP.has_schema, LSP.get_cache, Query.execute_async
+      LSP.has_schema = function()
+        return true
+      end
+      LSP.get_cache = function()
+        return cache
+      end
+    end)
+
+    after_each(function()
+      LSP.has_schema, LSP.get_cache, Query.execute_async = original_has_schema, original_get_cache, original_execute
+    end)
+
+    it("fetches the referenced row, one row only", function()
+      local sent, got
+      Query.execute_async = function(adapter, sql, callback, opts)
+        sent = { sql = sql, opts = opts }
+        callback({ headers = { "id" }, rows = { { "42" } } }, nil)
+      end
+      local results = { headers = { "id", "customer_id" }, rows = { { "7", "42" } } }
+      Follow.preview(datasource, "shop", "SELECT * FROM orders", results, 1, 2, 80, function(lines)
+        got = lines
+      end)
+      assert.are.equal("SELECT * FROM `Customers` WHERE `id` = 42", sent.sql)
+      assert.are.same({ max_rows = 1 }, sent.opts)
+      assert.are.same({ "→ orders.customer_id → Customers.id", "  id  42" }, got)
+    end)
+
+    it("does nothing for a column that is not a foreign key or a NULL key", function()
+      Query.execute_async = function()
+        error("should not run")
+      end
+      local results = { headers = { "id", "customer_id" }, rows = { { "7", "NULL" } } }
+      Follow.preview(datasource, "shop", "SELECT * FROM orders", results, 1, 1, 80, function()
+        error("should not call back")
+      end)
+      Follow.preview(datasource, "shop", "SELECT * FROM orders", results, 1, 2, 80, function()
+        error("should not call back")
+      end)
+    end)
+  end)
+
   describe("follow", function()
     local original_has_schema, original_get_cache, original_run, original_notify
 

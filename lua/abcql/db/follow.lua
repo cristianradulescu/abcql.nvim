@@ -194,6 +194,92 @@ function Follow.label(target)
   )
 end
 
+--- Cut a string to `width` display cells, ending it with `…` when something was dropped
+---@param text string
+---@param width number
+---@return string
+local function truncate(text, width)
+  if vim.fn.strdisplaywidth(text) <= width then
+    return text
+  end
+  local kept, used = {}, 0
+  for i = 0, vim.fn.strchars(text) - 1 do
+    local char = vim.fn.strcharpart(text, i, 1)
+    local char_width = vim.fn.strdisplaywidth(char)
+    if used + char_width > width - 1 then
+      break
+    end
+    table.insert(kept, char)
+    used = used + char_width
+  end
+  return table.concat(kept) .. "…"
+end
+
+--- Lines describing a referenced row: a `→ label` heading, then one aligned `column  value`
+--- pair per column (multi-line values folded onto one line, values cut so a line fits `width`)
+---@param target abcql.FollowTarget
+---@param result QueryResult|nil
+---@param err string|nil
+---@param width number Display width a line may take
+---@return string[] lines
+---@return { line: number, col_start: number, col_end: number }[] names Byte range of each column name (1-based line in `lines`)
+function Follow.preview_lines(target, result, err, width)
+  local lines, names = { "→ " .. Follow.label(target) }, {}
+  if err then
+    table.insert(lines, "  " .. (err:gsub("\n", " ")))
+    return lines, names
+  end
+  local row = result and result.rows and result.rows[1]
+  if not row then
+    table.insert(lines, "  (no referenced row found)")
+    return lines, names
+  end
+  local name_width = 0
+  for i = 1, #result.headers do
+    name_width = math.max(name_width, vim.fn.strdisplaywidth(result.headers[i]))
+  end
+  -- "  name  value", keeping a few cells for the value even next to a very long name
+  local value_width = math.max(width - name_width - 4, 10)
+  for i = 1, #result.headers do
+    local header = result.headers[i]
+    local value = row[i]
+    value = (value == nil or value == vim.NIL) and "NULL" or tostring(value)
+    value = truncate((value:gsub("\r?\n", " ↵ ")), value_width)
+    local pad = string.rep(" ", name_width - vim.fn.strdisplaywidth(header))
+    table.insert(lines, "  " .. header .. pad .. "  " .. value)
+    table.insert(names, { line = #lines, col_start = 2, col_end = 2 + #header })
+  end
+  return lines, names
+end
+
+--- Fetch the rows the foreign keys of a result cell point at, for the cell popup. Silent:
+--- nothing is reported when the schema isn't loaded, the column is no foreign key or the key is
+--- NULL. `callback` gets the preview lines (and column name ranges, see `preview_lines`) of
+--- each key as its query returns.
+---@param datasource Datasource
+---@param database string|nil Database the result's query ran in
+---@param sql string|nil Query that produced the result
+---@param results QueryResult
+---@param row_idx number
+---@param col_idx number
+---@param width number Display width a preview line may take
+---@param callback fun(lines: string[], names: { line: number, col_start: number, col_end: number }[])
+function Follow.preview(datasource, database, sql, results, row_idx, col_idx, width, callback)
+  local LSP = require("abcql.lsp")
+  if not LSP.has_schema(datasource.name) then
+    return
+  end
+  local cache = LSP.get_cache()
+  for _, target in ipairs(Follow.targets(cache, datasource.name, database, sql, results.headers, col_idx)) do
+    local preview_sql = Follow.build_sql(cache, datasource, target, results.rows[row_idx])
+    if preview_sql then
+      require("abcql.db.query").execute_async(datasource.adapter, preview_sql, function(result, err)
+        callback(Follow.preview_lines(target, result, err, width))
+      end, { max_rows = 1 })
+    end
+  end
+end
+
 --- Follow the foreign key of a result cell: run the SELECT of the referenced row through
 --- `Query.run` (so it lands in history and `<C-o>` goes back). Asks which key to follow when
 --- the column matches several.
