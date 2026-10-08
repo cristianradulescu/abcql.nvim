@@ -81,4 +81,44 @@ describe("Export", function()
       assert.are.equal("zzz_plain", labels.zzz_plain)
     end)
   end)
+  describe("insert context", function()
+    local function export_with_query(sql)
+      local UI = require("abcql.ui")
+      local og, od = UI.get_visible_results, UI.get_display_opts
+      UI.get_visible_results = function()
+        return { headers = { "a" }, rows = { { "1" } } }
+      end
+      UI.get_display_opts = function()
+        return { query = sql }
+      end
+      Export.export_current("insert", { clipboard = true })
+      UI.get_visible_results, UI.get_display_opts = og, od
+      return vim.fn.getreg('"', 1, 1)
+    end
+
+    it("names the table when the query reads exactly one", function()
+      assert.are.equal("INSERT INTO users (a)", export_with_query("SELECT a FROM users")[1])
+    end)
+
+    it("leaves a placeholder for joins", function()
+      assert.are.equal(
+        "INSERT INTO <table> (a)",
+        export_with_query("SELECT a FROM users u JOIN orders o ON o.uid = u.id")[1]
+      )
+    end)
+  end)
+  describe("default file extension", function()
+    it("maps insert to .sql and markdown to .md", function()
+      local dir = vim.fn.tempname()
+      vim.fn.mkdir(dir, "p")
+      local cwd = vim.fn.getcwd()
+      vim.cmd.cd(dir)
+      local data = { headers = { "a" }, rows = { { "1" } } }
+      local sql = Export.export("insert", data)
+      local md = Export.export("markdown", data)
+      vim.cmd.cd(cwd)
+      assert.is_truthy(sql.filepath:match("%.sql$"))
+      assert.is_truthy(md.filepath:match("%.md$"))
+    end)
+  end)
 end)

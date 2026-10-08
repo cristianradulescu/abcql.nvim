@@ -1735,6 +1735,12 @@ function UI.get_cursor_target()
   }
 end
 
+--- The query and datasource behind the displayed result (for export context)
+--- @return abcql.UI.DisplayOpts
+function UI.get_display_opts()
+  return state.display_opts or {}
+end
+
 --- Get the current query results (for export functionality)
 --- @return QueryResult|nil The current results, or nil if none available
 function UI.get_current_results()

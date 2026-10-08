@@ -1,7 +1,7 @@
 ---@class abcql.export.Registry
 local Registry = {}
 
----@alias ExportFormatter fun(results: QueryResult): string[], string? -- Returns lines and optional error
+---@alias ExportFormatter fun(results: QueryResult, context: ExportContext?): string[], string? -- Returns lines and optional error
 
 -- Internal storage for registered formats
 local formats = {}

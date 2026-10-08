@@ -4,7 +4,8 @@ local Export = {}
 ---@alias ExportResult { success: boolean, filepath: string?, clipboard: boolean?, lines: integer?, error: string? }
 ---@alias ExportScope "all"|"cell"|"row"|"column"
 ---@alias ExportTarget { col: integer?, row: any[]? } -- the result cell an export scope is taken from: column index, row values
----@alias ExportOptions { filepath: string?, clipboard: boolean? }
+---@alias ExportContext { table: string?, adapter: abcql.db.adapter.Adapter? } -- where the results came from: the one table the query read (nil when unclear) and the datasource adapter
+---@alias ExportOptions { filepath: string?, clipboard: boolean?, context: ExportContext? }
 
 local Registry = require("abcql.export.registry")
 local CSV = require("abcql.export.csv")
@@ -13,6 +14,7 @@ local JSON = require("abcql.export.json")
 local Values = require("abcql.export.values")
 local Rows = require("abcql.export.rows")
 local Markdown = require("abcql.export.markdown")
+local Insert = require("abcql.export.insert")
 
 -- Register built-in formats
 Registry.register("csv", CSV.export, "comma-separated table, RFC 4180 quoting")
@@ -21,9 +23,10 @@ Registry.register("json", JSON.export, "array of objects (needs jq)")
 Registry.register("values", Values.export, "one comma-separated line for IN (...)")
 Registry.register("rows", Rows.export, "one value per line")
 Registry.register("markdown", Markdown.export, "GitHub-style pipe table")
+Registry.register("insert", Insert.export, "INSERT INTO statement (<table> placeholder if unclear)")
 
 -- File extension per format when it differs from the format name
-local EXTENSIONS = { markdown = "md" }
+local EXTENSIONS = { markdown = "md", insert = "sql" }
 
 --- Generate a default filename with timestamp
 --- @param format string The export format (e.g., "csv", "json")
@@ -72,7 +75,7 @@ function Export.export(format, results, opts)
   local formatter = Registry.get(format)
 
   -- Convert results to lines using the formatter
-  local lines, err = formatter(results)
+  local lines, err = formatter(results, opts.context)
   if err then
     return {
       success = false,
@@ -170,6 +173,19 @@ local function select_format(prompt, callback)
   end)
 end
 
+--- Where the displayed result came from: the datasource adapter and, when the query read exactly
+--- one table, its name (formats like "insert" use it; joins and unknown queries leave it nil)
+--- @return ExportContext
+local function source_context()
+  local opts = require("abcql.ui").get_display_opts()
+  local sql = opts.sent_query or opts.query
+  local names = sql and require("abcql.lsp.parser").extract_table_names(sql) or {}
+  return {
+    table = #names == 1 and names[1] or nil,
+    adapter = opts.datasource and opts.datasource.adapter or nil,
+  }
+end
+
 --- Export (part of) the current query results from the UI, to a file or the clipboard.
 --- This is the single entry point for the export commands and the results yank keys.
 --- @param format? string The export format; asked for with vim.ui.select when nil or empty
@@ -194,6 +210,8 @@ function Export.export_current(format, opts)
     vim.notify(string.format("Export failed: %s", scope_err), vim.log.levels.ERROR)
     return { success = false, error = scope_err }
   end
+
+  opts = vim.tbl_extend("keep", opts, { context = source_context() })
 
   if not format or format == "" then
     select_format(opts.clipboard and "Copy as:" or "Export as:", function(choice)

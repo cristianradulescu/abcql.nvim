@@ -4,7 +4,7 @@ local Values = {}
 --- Whether a value is safe to emit as an unquoted SQL number (no leading zeros, so "007" stays a string)
 --- @param value string
 --- @return boolean
-local function is_number(value)
+function Values.is_number(value)
   return value:match("^-?[1-9]%d*%.?%d*$") ~= nil or value:match("^-?0%.?%d*$") ~= nil and value:match("^-?0%d") == nil
 end
 
@@ -27,7 +27,7 @@ function Values.export(results)
       if cell ~= nil and cell ~= vim.NIL and tostring(cell) ~= "NULL" then
         local str = tostring(cell)
         table.insert(values, str)
-        numeric = numeric and is_number(str)
+        numeric = numeric and Values.is_number(str)
       end
     end
   end
