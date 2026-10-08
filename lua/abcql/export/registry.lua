@@ -5,11 +5,13 @@ local Registry = {}
 
 -- Internal storage for registered formats
 local formats = {}
+local descriptions = {}
 
 --- Register a new export format
 --- @param name string The format name (e.g., "csv", "json", "tsv")
 --- @param formatter ExportFormatter Function that converts QueryResult to array of lines
-function Registry.register(name, formatter)
+--- @param description? string Short description shown in the format picker
+function Registry.register(name, formatter, description)
   if type(name) ~= "string" or name == "" then
     error("Format name must be a non-empty string")
   end
@@ -19,6 +21,14 @@ function Registry.register(name, formatter)
   end
 
   formats[name] = formatter
+  descriptions[name] = description
+end
+
+--- Get the short description of a format
+--- @param name string The format name
+--- @return string|nil description
+function Registry.description(name)
+  return descriptions[name]
 end
 
 --- Get a registered format formatter
@@ -49,6 +59,7 @@ end
 --- Clear all registered formats (mainly for testing)
 function Registry.clear()
   formats = {}
+  descriptions = {}
 end
 
 return Registry

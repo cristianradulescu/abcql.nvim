@@ -53,4 +53,32 @@ describe("Export", function()
       assert.are.equal("v", vim.fn.getregtype('"'))
     end)
   end)
+  describe("format picker", function()
+    it("shows each format with its description", function()
+      local seen
+      local orig = vim.ui.select
+      vim.ui.select = function(items, opts, cb)
+        seen = { items = items, labels = vim.tbl_map(opts.format_item, items) }
+      end
+      Export.register_format("zzz", function() end, "test format")
+      Export.register_format("zzz_plain", function() end)
+      -- no data: export_current bails out before the picker, so drive the picker via a result
+      local UI = require("abcql.ui")
+      local orig_get = UI.get_visible_results
+      UI.get_visible_results = function()
+        return { headers = { "a" }, rows = { { "1" } } }
+      end
+      Export.export_current(nil, { clipboard = true })
+      UI.get_visible_results = orig_get
+      vim.ui.select = orig
+
+      local labels = {}
+      for i, name in ipairs(seen.items) do
+        labels[name] = seen.labels[i]
+      end
+      assert.is_truthy(labels.csv:match("^csv%s+%S"))
+      assert.is_truthy(labels.zzz:match("test format$"))
+      assert.are.equal("zzz_plain", labels.zzz_plain)
+    end)
+  end)
 end)

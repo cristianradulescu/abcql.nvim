@@ -15,12 +15,12 @@ local Rows = require("abcql.export.rows")
 local Markdown = require("abcql.export.markdown")
 
 -- Register built-in formats
-Registry.register("csv", CSV.export)
-Registry.register("tsv", TSV.export)
-Registry.register("json", JSON.export)
-Registry.register("values", Values.export)
-Registry.register("rows", Rows.export)
-Registry.register("markdown", Markdown.export)
+Registry.register("csv", CSV.export, "comma-separated table, RFC 4180 quoting")
+Registry.register("tsv", TSV.export, "tab-separated table")
+Registry.register("json", JSON.export, "array of objects (needs jq)")
+Registry.register("values", Values.export, "one comma-separated line for IN (...)")
+Registry.register("rows", Rows.export, "one value per line")
+Registry.register("markdown", Markdown.export, "GitHub-style pipe table")
 
 -- File extension per format when it differs from the format name
 local EXTENSIONS = { markdown = "md" }
@@ -157,7 +157,13 @@ end
 --- @param prompt string
 --- @param callback fun(format: string)
 local function select_format(prompt, callback)
-  vim.ui.select(Registry.list(), { prompt = prompt }, function(choice)
+  vim.ui.select(Registry.list(), {
+    prompt = prompt,
+    format_item = function(name)
+      local description = Registry.description(name)
+      return description and string.format("%-9s %s", name, description) or name
+    end,
+  }, function(choice)
     if choice then
       callback(choice)
     end
@@ -275,8 +281,9 @@ end
 --- Register a custom export format
 --- @param name string The format name
 --- @param formatter fun(results: QueryResult): string[]?, string? Function that converts results to lines
-function Export.register_format(name, formatter)
-  Registry.register(name, formatter)
+--- @param description? string Short description shown in the format picker
+function Export.register_format(name, formatter, description)
+  Registry.register(name, formatter, description)
 end
 
 --- Get list of available export formats
