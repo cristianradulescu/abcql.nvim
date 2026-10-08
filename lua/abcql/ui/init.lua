@@ -258,6 +258,9 @@ local function show_results_tab(tab)
       vim.api.nvim_win_set_buf(win, buf)
       vim.wo[win].winfixbuf = true
     end
+    if tab == "output" then
+      require("abcql.ui.sticky_header").hide()
+    end
     -- The query reads better wrapped; table rows must not wrap
     vim.wo[win].wrap = tab == "output"
   end
@@ -984,13 +987,25 @@ local function setup_tree_keymaps(buf)
   end, "abcql: browse table data")
 end
 
+--- Sync the sticky header float with the results window's scroll position
+local function update_sticky_header()
+  local show = state.results_tab == "result" and state.results_visible and state.table_top_line
+  require("abcql.ui.sticky_header").update(show and state.results_win or nil, show and state.table_top_line + 1 or nil)
+end
+
 --- Register the WinClosed autocmd for the results window
 local function watch_results_window()
+  vim.api.nvim_create_autocmd("WinScrolled", {
+    group = AUGROUP,
+    pattern = tostring(state.results_win),
+    callback = update_sticky_header,
+  })
   vim.api.nvim_create_autocmd("WinClosed", {
     group = AUGROUP,
     pattern = tostring(state.results_win),
     once = true,
     callback = function()
+      require("abcql.ui.sticky_header").hide()
       state.results_win = nil
       state.results_visible = false
     end,
@@ -1485,6 +1500,7 @@ local function render(buf, results, opts, keep_position)
 
   state.table_top_line = nil
   state.visible_rows = nil
+  require("abcql.ui.sticky_header").hide()
   if type(results) ~= "table" then
     state.current_widths = nil
   end
@@ -1631,6 +1647,7 @@ local function render(buf, results, opts, keep_position)
   table.insert(lines, " " .. summary)
 
   set_results_lines(buf, lines, keep_position)
+  update_sticky_header()
 
   -- Apply syntax highlighting
   highlights.apply_highlights(buf, { headers = header_labels, rows = rows }, 0, widths)
