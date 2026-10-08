@@ -91,29 +91,28 @@ end, {
   desc = "Browse query history",
 })
 
---- Export current query results to a file in the given format (default: csv)
+--- Export current query results to a file in the given format (asked for when omitted)
 --- Saves to current working directory with timestamp (json requires jq)
 vim.api.nvim_create_user_command("AbcqlExport", function(args)
-  require("abcql.export").export_current(args.args ~= "" and args.args or "csv")
+  require("abcql.export").export_current(args.args)
 end, {
   nargs = "?",
   complete = function()
     return require("abcql.export").list_formats()
   end,
-  desc = "Export current query results to a file (default: csv)",
+  desc = "Export current query results to a file (asked for when omitted)",
 })
 
 --- Copy current query results to the clipboard in the given export format
 vim.api.nvim_create_user_command("AbcqlExportCopy", function(args)
   local Export = require("abcql.export")
-  local format = args.args ~= "" and args.args or "csv"
-  Export.export_current(format, { clipboard = true })
+  Export.export_current(args.args, { clipboard = true })
 end, {
   nargs = "?",
   complete = function()
     return require("abcql.export").list_formats()
   end,
-  desc = "Copy current query results to the clipboard (default: csv)",
+  desc = "Copy current query results to the clipboard (asked for when omitted)",
 })
 
 --- Refresh LSP schema cache for the current buffer's datasource

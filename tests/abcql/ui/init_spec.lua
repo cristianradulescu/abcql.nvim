@@ -270,11 +270,16 @@ describe("UI", function()
     end)
 
     it("resolves cell keys through the sorted rows", function()
+      vim.ui.select = function(items, _, on_choice)
+        on_choice("tsv")
+      end
       press("s", 2, "name")
       press("yc", 4, "name")
-      assert.are.equal("a", vim.fn.getreg('"'))
+      assert.are.equal("name\na\n", vim.fn.getreg('"'))
       press("yr", 4, "id")
-      assert.are.equal("2\ta\t9", vim.fn.getreg('"'))
+      assert.are.equal("id\tname\ttotal\n2\ta\t9\n", vim.fn.getreg('"'))
+      press("yC", 4, "name")
+      assert.are.equal("name\na\nb\nc\n", vim.fn.getreg('"'))
     end)
 
     it("keeps or drops rows equal to the cell under the cursor", function()

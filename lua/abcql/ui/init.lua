@@ -460,35 +460,10 @@ local function show_cell_popup()
   end
 end
 
---- Yank the cell under the cursor to the unnamed and clipboard registers
-local function yank_cell()
-  local cell = get_cell_at_cursor()
-  if not cell then
-    vim.notify("abcql: no cell under cursor", vim.log.levels.INFO)
-    return
-  end
-  local value = cell_to_string(cell.value)
-  vim.fn.setreg('"', value)
-  vim.fn.setreg("+", value)
-  vim.notify("abcql: yanked " .. cell.header, vim.log.levels.INFO)
-end
-
---- Yank the row under the cursor as tab-separated values
-local function yank_row()
-  local cell = get_cell_at_cursor()
-  local results = state.current_results
-  if not cell or not results then
-    vim.notify("abcql: no row under cursor", vim.log.levels.INFO)
-    return
-  end
-  local values = {}
-  for i = 1, #results.headers do
-    table.insert(values, cell_to_string(results.rows[cell.row_idx][i]))
-  end
-  local text = table.concat(values, "\t")
-  vim.fn.setreg('"', text)
-  vim.fn.setreg("+", text)
-  vim.notify(string.format("abcql: yanked row %d", cell.row_idx), vim.log.levels.INFO)
+--- Copy the cell/row/column under the cursor to the clipboard, asking for the export format
+--- @param scope "cell"|"row"|"column"
+local function yank(scope)
+  require("abcql.export").export_current(nil, { clipboard = true, scope = scope })
 end
 
 --- Move the cursor to the next/previous cell (wrapping across rows)
@@ -711,8 +686,27 @@ local RESULTS_KEYMAPS = {
     title = "Cells",
     maps = {
       { { "K", "<CR>" }, show_cell_popup, "show full cell content and the row a foreign key references (y yanks it)" },
-      { { "yc" }, yank_cell, "yank cell" },
-      { { "yr" }, yank_row, "yank row (tab-separated)" },
+      {
+        { "yc" },
+        function()
+          yank("cell")
+        end,
+        "yank cell (asks for the export format)",
+      },
+      {
+        { "yr" },
+        function()
+          yank("row")
+        end,
+        "yank row (asks for the export format)",
+      },
+      {
+        { "yC" },
+        function()
+          yank("column")
+        end,
+        "yank column (asks for the export format; values = a, b, c for IN (...))",
+      },
       {
         { "<Tab>" },
         function()
@@ -1725,6 +1719,20 @@ function UI.refresh_view()
     end)
     vim.api.nvim_win_set_cursor(win, { line, range and range.start or 0 })
   end
+end
+
+--- The cell the export scopes are taken from: the column under the cursor (any table line) and,
+--- on a data row, that row's values. Empty unless the results window is current.
+--- @return ExportTarget
+function UI.get_cursor_target()
+  if not (state.results_win and vim.api.nvim_get_current_win() == state.results_win) then
+    return {}
+  end
+  local cell = get_cell_at_cursor()
+  return {
+    col = column_at_cursor(),
+    row = cell and state.current_results.rows[cell.row_idx] or nil,
+  }
 end
 
 --- Get the current query results (for export functionality)

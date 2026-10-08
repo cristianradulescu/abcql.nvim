@@ -407,8 +407,7 @@ trailing `;`/comment and before `FOR UPDATE`/`FOR SHARE`/`LOCK IN SHARE MODE`.
 |-----------------|-------------------------------------------------------|
 | `o`             | Switch between the Result and Output tabs             |
 | `K` / `<CR>`    | Open the full cell value in a float (`y` yanks it)    |
-| `yc`            | Yank the cell under the cursor                        |
-| `yr`            | Yank the row under the cursor (tab-separated)         |
+| `yc` / `yr` / `yC` | Yank the cell / row / column under the cursor: asks for an export format (same as `:AbcqlExportCopy`) and copies it to the clipboard |
 | `<Tab>` / `<S-Tab>` | Move to the next / previous cell                  |
 | `gf`            | Follow the foreign key of the cell (show the referenced row) |
 | `s`             | Sort by the column under the cursor (asc → desc → off) |
@@ -424,7 +423,7 @@ result (`auto LIMIT` / `max_rows` in the footer) they don't see the rows that we
 Text filters are case-insensitive substrings; numeric columns sort as numbers, NULLs first when
 ascending. Filters combine with AND and are listed in the footer (`12 of 1,000 rows • filter: …`).
 A new result, or moving through history, starts unsorted and unfiltered. Export and the cell keys
-(`K`, `yc`, `yr`) act on what is shown.
+(`K`, `yc`, `yr`, `yC`) act on what is shown.
 
 `gf` on a foreign-key cell runs `SELECT * FROM <referenced table> WHERE <referenced column> =
 <value>` as a new query, so it lands in history and `<C-o>` goes back. The key is looked up in the
@@ -507,9 +506,9 @@ After executing a query and viewing results, you can export them to various form
 
 #### User Commands
 
-- `:AbcqlExport [format]` - Export current results to a file; `format` is any registered export format (`csv` (default), `tsv`, `json`; `json` requires `jq` installed)
+- `:AbcqlExport [format]` - Export current results to a file; `format` is any registered export format (`csv`, `tsv`, `json`, `values`; `json` requires `jq` installed). Without a `format`, a picker lists the available ones
 
-- `:AbcqlExportCopy [format]` - Copy current results to the clipboard (`+` and unnamed registers) instead of a file; `format` is any registered export format (default `csv`)
+- `:AbcqlExportCopy [format]` - Copy current results to the clipboard (`+` and unnamed registers) instead of a file; `format` is any registered export format; without one, a picker asks for it
 
 Files are saved to your current working directory with auto-generated names like `query_YYYYMMDD_HHMMSS.csv`.
 
@@ -524,6 +523,13 @@ Files are saved to your current working directory with auto-generated names like
 - Tab-separated fields
 - Tabs and newlines in values are replaced with spaces
 - No quoting required
+
+**Values (column as a list)**
+- One column, as a single comma-separated line for pasting into `IN (...)`, e.g. `1, 2, 3` or `'a', 'it''s'`
+- Meant for a single column: yank it with `yC` and pick `values`. Applied to a row or the whole result it lists every value
+- Numbers are left bare when every value is numeric (no leading zeros), otherwise all values are single-quoted
+- NULLs are skipped; honors the current sort/filter
+- Copied inline (charwise), so it pastes in the middle of a line
 
 **JSON**
 - Array of objects format

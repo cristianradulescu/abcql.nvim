@@ -2,17 +2,21 @@
 local Export = {}
 
 ---@alias ExportResult { success: boolean, filepath: string?, clipboard: boolean?, lines: integer?, error: string? }
+---@alias ExportScope "all"|"cell"|"row"|"column"
+---@alias ExportTarget { col: integer?, row: any[]? } -- the result cell an export scope is taken from: column index, row values
 ---@alias ExportOptions { filepath: string?, clipboard: boolean? }
 
 local Registry = require("abcql.export.registry")
 local CSV = require("abcql.export.csv")
 local TSV = require("abcql.export.tsv")
 local JSON = require("abcql.export.json")
+local Values = require("abcql.export.values")
 
 -- Register built-in formats
 Registry.register("csv", CSV.export)
 Registry.register("tsv", TSV.export)
 Registry.register("json", JSON.export)
+Registry.register("values", Values.export)
 
 --- Generate a default filename with timestamp
 --- @param format string The export format (e.g., "csv", "json")
@@ -77,8 +81,13 @@ function Export.export(format, results, opts)
   end
 
   if opts.clipboard then
-    vim.fn.setreg('"', lines, "l")
-    vim.fn.setreg("+", lines, "l")
+    -- a single line (e.g. a value list) pastes inline; several lines paste as whole lines
+    local text, regtype = lines, "l"
+    if #lines == 1 then
+      text, regtype = lines[1], "v"
+    end
+    vim.fn.setreg('"', text, regtype)
+    vim.fn.setreg("+", text, regtype)
     return {
       success = true,
       clipboard = true,
@@ -104,39 +113,109 @@ function Export.export(format, results, opts)
   }
 end
 
---- Export current query results from the UI
---- @param format string The export format
---- @param opts? ExportOptions Optional parameters
---- @return ExportResult Result object
+--- Narrow results down to a scope, as a QueryResult of its own so any formatter can export it
+--- @param results QueryResult
+--- @param scope ExportScope "all" (everything), or one "cell", "row" or "column" of `target`
+--- @param target? ExportTarget
+--- @return QueryResult? subset
+--- @return string? err
+function Export.slice(results, scope, target)
+  target = target or {}
+  if scope == "all" then
+    return results
+  elseif scope == "cell" then
+    if not (target.col and target.row) then
+      return nil, "No cell under cursor"
+    end
+    return { headers = { results.headers[target.col] }, rows = { { target.row[target.col] } } }
+  elseif scope == "row" then
+    if not target.row then
+      return nil, "No row under cursor"
+    end
+    return { headers = results.headers, rows = { target.row } }
+  elseif scope == "column" then
+    if not (target.col and results.headers[target.col]) then
+      return nil, "No column under cursor"
+    end
+    local rows = {}
+    for i, row in ipairs(results.rows) do
+      rows[i] = { row[target.col] }
+    end
+    return { headers = { results.headers[target.col] }, rows = rows }
+  end
+  return nil, string.format("Unknown export scope '%s'", tostring(scope))
+end
+
+--- Ask which export format to use
+--- @param prompt string
+--- @param callback fun(format: string)
+local function select_format(prompt, callback)
+  vim.ui.select(Registry.list(), { prompt = prompt }, function(choice)
+    if choice then
+      callback(choice)
+    end
+  end)
+end
+
+--- Export (part of) the current query results from the UI, to a file or the clipboard.
+--- This is the single entry point for the export commands and the results yank keys.
+--- @param format? string The export format; asked for with vim.ui.select when nil or empty
+--- @param opts? ExportOptions|{ scope: ExportScope? } scope defaults to "all"; the cell/row/column is taken at the cursor
+--- @return ExportResult? result Result object (nil when the format is still being asked for)
 function Export.export_current(format, opts)
+  opts = opts or {}
+  local scope = opts.scope or "all"
   local UI = require("abcql.ui")
   -- Export what the user sees: the sorted/filtered view, not the full loaded result
-  local current_results, filtered = UI.get_visible_results()
+  local visible, filtered = UI.get_visible_results()
 
-  if not current_results then
-    return {
-      success = false,
-      error = "No query results available to export. Run a query first.",
-    }
-  end
-
-  local result = Export.export(format, current_results, opts)
-
-  -- Notify user of the result
-  if result.success then
-    local note = ""
-    if filtered then
-      note = string.format(" (filtered view: %d of %d rows)", #current_results.rows, #UI.get_current_results().rows)
-    end
-    if result.clipboard then
-      vim.notify(string.format("Copied %d lines (%s) to clipboard%s", result.lines, format, note), vim.log.levels.INFO)
-    else
-      vim.notify(string.format("Exported to: %s%s", result.filepath, note), vim.log.levels.INFO)
-    end
-  else
+  if not visible then
+    local result = { success = false, error = "No query results available to export. Run a query first." }
     vim.notify(string.format("Export failed: %s", result.error), vim.log.levels.ERROR)
+    return result
   end
 
+  -- Resolve the scope now: the format picker may move the cursor away from the results window
+  local data, scope_err = Export.slice(visible, scope, UI.get_cursor_target())
+  if not data then
+    vim.notify(string.format("Export failed: %s", scope_err), vim.log.levels.ERROR)
+    return { success = false, error = scope_err }
+  end
+
+  if not format or format == "" then
+    select_format(opts.clipboard and "Copy as:" or "Export as:", function(choice)
+      Export.finish(choice, data, opts, scope, filtered and #visible.rows or nil)
+    end)
+    return nil
+  end
+  return Export.finish(format, data, opts, scope, filtered and #visible.rows or nil)
+end
+
+--- Export already-resolved data and tell the user how it went
+--- @param format string
+--- @param data QueryResult
+--- @param opts ExportOptions
+--- @param scope ExportScope
+--- @param filtered_rows? integer Row count of the filtered view, when the view is filtered
+--- @return ExportResult
+function Export.finish(format, data, opts, scope, filtered_rows)
+  local result = Export.export(format, data, opts)
+  if not result.success then
+    vim.notify(string.format("Export failed: %s", result.error), vim.log.levels.ERROR)
+    return result
+  end
+
+  local note = ""
+  if filtered_rows and (scope == "all" or scope == "column") then
+    local total = #require("abcql.ui").get_current_results().rows
+    note = string.format(" (filtered view: %d of %d rows)", filtered_rows, total)
+  end
+  if result.clipboard then
+    local what = scope == "all" and "results" or scope
+    vim.notify(string.format("Copied %s as %s to clipboard%s", what, format, note), vim.log.levels.INFO)
+  else
+    vim.notify(string.format("Exported to: %s%s", result.filepath, note), vim.log.levels.INFO)
+  end
   return result
 end
 
