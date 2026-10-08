@@ -108,6 +108,32 @@ local function is_boolean(str)
   return lower == "true" or lower == "false" or lower == "1" or lower == "0"
 end
 
+--- Find where each column's content starts in a rendered table line
+--- Walks the line by display width (`│ ` then width + 3 per column), so multibyte text in
+--- earlier cells doesn't skew the offsets.
+--- @param line string
+--- @param widths number[] Column widths
+--- @return { start: number, width: number }[] start is the 1-based byte index of the content
+function M.column_starts(line, widths)
+  local starts = {}
+  local target = 2
+  local col_idx = 1
+  local byte_pos, disp = 1, 0
+  for _, ch in ipairs(vim.fn.split(line, "\\zs")) do
+    if col_idx > #widths then
+      break
+    end
+    if disp >= target then
+      starts[col_idx] = { start = byte_pos, width = widths[col_idx] }
+      target = target + widths[col_idx] + 3
+      col_idx = col_idx + 1
+    end
+    byte_pos = byte_pos + #ch
+    disp = disp + vim.fn.strdisplaywidth(ch)
+  end
+  return starts
+end
+
 --- Apply highlights to the results buffer
 --- @param buf number Buffer ID
 --- @param results table Query results with headers and rows
@@ -132,28 +158,7 @@ function M.apply_highlights(buf, results, line_offset, widths)
   local header_line = line_offset + 1
   M.add(buf, "AbcqlBorder", header_line, 0, -1)
 
-  -- Calculate byte positions by finding the vertical bar positions in the actual line
-  local header_line_content = lines[2] or ""
-  local col_byte_positions = {}
-
-  -- Find each │ character and the content between them
-  local byte_pos = 1
-  local col_idx = 1
-  while byte_pos <= #header_line_content do
-    -- Check for start of │ (first byte is 0xE2 in UTF-8 for box drawing)
-    if header_line_content:sub(byte_pos, byte_pos + 2) == "│" then
-      -- Skip the │ and the space after it
-      byte_pos = byte_pos + 3 + 1 -- 3 bytes for │, 1 for space
-      if col_idx <= #widths then
-        col_byte_positions[col_idx] = { start = byte_pos, width = widths[col_idx] }
-        col_idx = col_idx + 1
-      end
-      -- Skip past the column content
-      byte_pos = byte_pos + widths[col_idx - 1]
-    else
-      byte_pos = byte_pos + 1
-    end
-  end
+  local col_byte_positions = M.column_starts(lines[2] or "", widths)
 
   -- Apply header highlights using calculated positions
   for i, col_info in ipairs(col_byte_positions) do
@@ -176,8 +181,10 @@ function M.apply_highlights(buf, results, line_offset, widths)
     -- Apply alternating row background to entire line
     M.add(buf, row_hl, line_num, 0, -1)
 
-    -- Highlight individual cells based on content
-    for i, col_info in ipairs(col_byte_positions) do
+    -- Highlight individual cells based on content. Byte offsets are per line: a header cell can
+    -- hold multibyte text (the sort indicator) that shifts the columns after it on that line only.
+    local row_positions = M.column_starts(lines[row_idx + 3] or "", widths)
+    for i, col_info in ipairs(row_positions) do
       local cell = row[i]
       local cell_str = cell == nil and "NULL" or tostring(cell)
       local start_byte = col_info.start - 1 -- 0-indexed
