@@ -91,28 +91,29 @@ end, {
   desc = "Browse query history",
 })
 
---- Export current query results to CSV format
---- Saves to current working directory with timestamp
-vim.api.nvim_create_user_command("AbcqlExportCsv", function()
-  require("abcql.export").export_current("csv")
+--- Export current query results to a file in the given format (default: csv)
+--- Saves to current working directory with timestamp (json requires jq)
+vim.api.nvim_create_user_command("AbcqlExport", function(args)
+  require("abcql.export").export_current(args.args ~= "" and args.args or "csv")
 end, {
-  desc = "Export current query results to CSV file",
+  nargs = "?",
+  complete = function()
+    return require("abcql.export").list_formats()
+  end,
+  desc = "Export current query results to a file (default: csv)",
 })
 
---- Export current query results to TSV format
---- Saves to current working directory with timestamp
-vim.api.nvim_create_user_command("AbcqlExportTsv", function()
-  require("abcql.export").export_current("tsv")
+--- Copy current query results to the clipboard in the given export format
+vim.api.nvim_create_user_command("AbcqlExportCopy", function(args)
+  local Export = require("abcql.export")
+  local format = args.args ~= "" and args.args or "csv"
+  Export.export_current(format, { clipboard = true })
 end, {
-  desc = "Export current query results to TSV file",
-})
-
---- Export current query results to JSON format
---- Saves to current working directory with timestamp (requires jq)
-vim.api.nvim_create_user_command("AbcqlExportJson", function()
-  require("abcql.export").export_current("json")
-end, {
-  desc = "Export current query results to JSON file",
+  nargs = "?",
+  complete = function()
+    return require("abcql.export").list_formats()
+  end,
+  desc = "Copy current query results to the clipboard (default: csv)",
 })
 
 --- Refresh LSP schema cache for the current buffer's datasource

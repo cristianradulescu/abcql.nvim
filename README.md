@@ -320,7 +320,7 @@ lists all datasource actions:
 | `Datasource` | `AbcqlDatasourceAttach [name]`, `AbcqlDatasourceAdd [local\|user]`, `AbcqlDatasourceUpdate [name]`, `AbcqlDatasourceList`, `AbcqlDatasourceReload` |
 | `History`    | `AbcqlHistoryPick`, `AbcqlHistoryBack`, `AbcqlHistoryForward`, `AbcqlHistoryInfo`, `AbcqlHistoryClear` |
 | `Schema`     | `AbcqlSchemaRefresh`                                                                         |
-| `Export`     | `AbcqlExportCsv`, `AbcqlExportTsv`, `AbcqlExportJson`                                        |
+| `Export`     | `AbcqlExport [format]`, `AbcqlExportCopy [format]`                                    |
 | `Config`     | `AbcqlConfigInit [local\|user]`                                                              |
 
 ### Trying it Out
@@ -507,9 +507,9 @@ After executing a query and viewing results, you can export them to various form
 
 #### User Commands
 
-- `:AbcqlExportCsv` - Export current results to CSV format
-- `:AbcqlExportTsv` - Export current results to TSV format  
-- `:AbcqlExportJson` - Export current results to JSON format (requires `jq` installed)
+- `:AbcqlExport [format]` - Export current results to a file; `format` is any registered export format (`csv` (default), `tsv`, `json`; `json` requires `jq` installed)
+
+- `:AbcqlExportCopy [format]` - Copy current results to the clipboard (`+` and unnamed registers) instead of a file; `format` is any registered export format (default `csv`)
 
 Files are saved to your current working directory with auto-generated names like `query_YYYYMMDD_HHMMSS.csv`.
 

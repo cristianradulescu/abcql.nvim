@@ -42,7 +42,7 @@ local function check_core_dependencies()
     health.ok("jq is available (JSON export enabled)")
   else
     health.warn("jq is not available (JSON export disabled)", {
-      "Install jq to use :AbcqlExportJson.",
+      "Install jq to use :AbcqlExport json.",
     })
   end
 

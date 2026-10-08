@@ -1,8 +1,8 @@
 ---@class abcql.export
 local Export = {}
 
----@alias ExportResult { success: boolean, filepath: string?, error: string? }
----@alias ExportOptions { filepath: string? }
+---@alias ExportResult { success: boolean, filepath: string?, clipboard: boolean?, lines: integer?, error: string? }
+---@alias ExportOptions { filepath: string?, clipboard: boolean? }
 
 local Registry = require("abcql.export.registry")
 local CSV = require("abcql.export.csv")
@@ -24,10 +24,10 @@ local function generate_filename(format)
   return cwd .. "/" .. filename
 end
 
---- Export QueryResult to a file in the specified format
+--- Export QueryResult to a file (or the clipboard) in the specified format
 --- @param format string The export format (e.g., "csv", "json", "tsv")
 --- @param results QueryResult The query results to export
---- @param opts? ExportOptions Optional parameters (filepath)
+--- @param opts? ExportOptions Optional parameters (filepath; clipboard = true copies to the `"` and `+` registers instead of writing a file)
 --- @return ExportResult Result object with success status, filepath, or error
 function Export.export(format, results, opts)
   opts = opts or {}
@@ -76,6 +76,16 @@ function Export.export(format, results, opts)
     }
   end
 
+  if opts.clipboard then
+    vim.fn.setreg('"', lines, "l")
+    vim.fn.setreg("+", lines, "l")
+    return {
+      success = true,
+      clipboard = true,
+      lines = #lines,
+    }
+  end
+
   -- Determine filepath
   local filepath = opts.filepath or generate_filename(format)
 
@@ -118,7 +128,11 @@ function Export.export_current(format, opts)
     if filtered then
       note = string.format(" (filtered view: %d of %d rows)", #current_results.rows, #UI.get_current_results().rows)
     end
-    vim.notify(string.format("Exported to: %s%s", result.filepath, note), vim.log.levels.INFO)
+    if result.clipboard then
+      vim.notify(string.format("Copied %d lines (%s) to clipboard%s", result.lines, format, note), vim.log.levels.INFO)
+    else
+      vim.notify(string.format("Exported to: %s%s", result.filepath, note), vim.log.levels.INFO)
+    end
   else
     vim.notify(string.format("Export failed: %s", result.error), vim.log.levels.ERROR)
   end
