@@ -11,12 +11,14 @@ local CSV = require("abcql.export.csv")
 local TSV = require("abcql.export.tsv")
 local JSON = require("abcql.export.json")
 local Values = require("abcql.export.values")
+local Rows = require("abcql.export.rows")
 
 -- Register built-in formats
 Registry.register("csv", CSV.export)
 Registry.register("tsv", TSV.export)
 Registry.register("json", JSON.export)
 Registry.register("values", Values.export)
+Registry.register("rows", Rows.export)
 
 --- Generate a default filename with timestamp
 --- @param format string The export format (e.g., "csv", "json")
