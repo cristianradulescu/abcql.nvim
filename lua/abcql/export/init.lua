@@ -12,6 +12,7 @@ local TSV = require("abcql.export.tsv")
 local JSON = require("abcql.export.json")
 local Values = require("abcql.export.values")
 local Rows = require("abcql.export.rows")
+local Markdown = require("abcql.export.markdown")
 
 -- Register built-in formats
 Registry.register("csv", CSV.export)
@@ -19,13 +20,17 @@ Registry.register("tsv", TSV.export)
 Registry.register("json", JSON.export)
 Registry.register("values", Values.export)
 Registry.register("rows", Rows.export)
+Registry.register("markdown", Markdown.export)
+
+-- File extension per format when it differs from the format name
+local EXTENSIONS = { markdown = "md" }
 
 --- Generate a default filename with timestamp
 --- @param format string The export format (e.g., "csv", "json")
 --- @return string filepath The generated filepath
 local function generate_filename(format)
   local timestamp = os.date("%Y%m%d_%H%M%S")
-  local filename = string.format("query_%s.%s", timestamp, format)
+  local filename = string.format("query_%s.%s", timestamp, EXTENSIONS[format] or format)
   local cwd = vim.fn.getcwd()
   return cwd .. "/" .. filename
 end

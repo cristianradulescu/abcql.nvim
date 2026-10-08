@@ -506,7 +506,7 @@ After executing a query and viewing results, you can export them to various form
 
 #### User Commands
 
-- `:AbcqlExport [format]` - Export current results to a file; `format` is any registered export format (`csv`, `tsv`, `json`, `values`, `rows`; `json` requires `jq` installed). Without a `format`, a picker lists the available ones
+- `:AbcqlExport [format]` - Export current results to a file; `format` is any registered export format (`csv`, `tsv`, `json`, `values`, `rows`, `markdown`; `json` requires `jq` installed). Without a `format`, a picker lists the available ones
 
 - `:AbcqlExportCopy [format]` - Copy current results to the clipboard (`+` and unnamed registers) instead of a file; `format` is any registered export format; without one, a picker asks for it
 
@@ -534,6 +534,10 @@ Files are saved to your current working directory with auto-generated names like
 **Rows (one value per line)**
 - Every value on its own line, unquoted; a column becomes a plain list, a row or the whole result is flattened row by row
 - NULLs are skipped, newlines inside a value become spaces; honors the current sort/filter
+
+**Markdown (table)**
+- A GitHub-flavored pipe table with a header row, padded to align, for pasting into PRs, issues and chat; files are written as `.md`
+- `|` in a value is escaped, line breaks become `<br>`; NULLs are shown as `NULL`; honors the current sort/filter
 
 **JSON**
 - Array of objects format
