@@ -10,7 +10,7 @@ Insert.PLACEHOLDER = "<table>"
 --- @param value any
 --- @param adapter abcql.db.adapter.Adapter|nil
 --- @return string
-local function literal(value, adapter)
+function Insert.literal(value, adapter)
   if value == nil or value == vim.NIL or tostring(value) == "NULL" then
     return "NULL"
   end
@@ -62,7 +62,7 @@ function Insert.export(results, ctx)
   for r, row in ipairs(results.rows) do
     local cells = {}
     for i = 1, #results.headers do
-      cells[i] = literal(row[i], adapter)
+      cells[i] = Insert.literal(row[i], adapter)
     end
     table.insert(lines, "  (" .. table.concat(cells, ", ") .. ")" .. (r < #results.rows and "," or ";"))
   end

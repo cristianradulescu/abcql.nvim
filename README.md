@@ -506,7 +506,7 @@ After executing a query and viewing results, you can export them to various form
 
 #### User Commands
 
-- `:AbcqlExport [format]` - Export current results to a file (then asks whether to open it in the editor); `format` is any registered export format (`csv`, `tsv`, `json`, `values`, `rows`, `markdown`, `insert`; `json` requires `jq` installed). Without a `format`, a picker lists the available ones
+- `:AbcqlExport [format]` - Export current results to a file (then asks whether to open it in the editor); `format` is any registered export format (`csv`, `tsv`, `json`, `values`, `rows`, `markdown`, `insert`, `update`; `json` requires `jq` installed). Without a `format`, a picker lists the available ones
 
 - `:AbcqlExportCopy [format]` - Copy current results to the clipboard (`+` and unnamed registers) instead of a file; `format` is any registered export format; without one, a picker asks for it
 
@@ -545,6 +545,12 @@ Files are saved to your current working directory with auto-generated names like
 - Numbers and BLOB hex (`0xCAFE`) are left bare, NULLs become `NULL`, everything else is a quoted string (leading zeros are kept). Identifiers are escaped for the datasource's engine
 - Files are written as `.sql`
 - Headers are used as column names, so alias computed columns (`SELECT a + b AS total`) to match the target table; honors the current sort/filter
+
+**Update (UPDATE statements)**
+- One `UPDATE t SET col = value, ... WHERE key = value;` per row; you are asked which result columns form the `WHERE` condition, and those columns are left out of `SET`
+- Columns are picked one at a time (the picker shows what is picked so far; choose `[Done]` to finish) and joined with `AND`, e.g. `WHERE a = 1 AND b = 2`; once only one column is left to update, the picker stops. Cancelling the picker cancels the export
+- The table is taken from the query when it reads exactly one table, otherwise a `<table>` placeholder is written (same as `insert`); a NULL key becomes `IS NULL`
+- Values are quoted like in `insert`; files are written as `.sql`; honors the current sort/filter. Needs at least one column left to set
 
 **JSON**
 - Array of objects format

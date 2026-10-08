@@ -121,4 +121,86 @@ describe("Export", function()
       assert.is_truthy(md.filepath:match("%.md$"))
     end)
   end)
+  describe("update WHERE column", function()
+    it("asks for the WHERE column and leaves it out of SET", function()
+      local UI = require("abcql.ui")
+      local og, od, os_ = UI.get_visible_results, UI.get_display_opts, vim.ui.select
+      UI.get_visible_results = function()
+        return { headers = { "id", "name" }, rows = { { "1", "x" } } }
+      end
+      UI.get_display_opts = function()
+        return { query = "SELECT * FROM users" }
+      end
+      local prompts = {}
+      vim.ui.select = function(items, opts, cb)
+        table.insert(prompts, opts.prompt)
+        cb(items[1], 1)
+      end
+      Export.export_current("update", { clipboard = true })
+      UI.get_visible_results, UI.get_display_opts, vim.ui.select = og, od, os_
+      assert.are.same({ "WHERE column:" }, prompts)
+      assert.are.equal("UPDATE users SET name = 'x' WHERE id = 1;", vim.fn.getreg('"'))
+    end)
+
+    it("picks several WHERE columns one at a time until Done", function()
+      local UI = require("abcql.ui")
+      local og, od, os_ = UI.get_visible_results, UI.get_display_opts, vim.ui.select
+      UI.get_visible_results = function()
+        return { headers = { "a", "b", "c", "d" }, rows = { { "1", "2", "3", "4" } } }
+      end
+      UI.get_display_opts = function()
+        return { query = "SELECT * FROM t" }
+      end
+      local offered = {}
+      local answers = { 1, 3, 0 } -- a, then c, then Done
+      vim.ui.select = function(items, opts, cb)
+        table.insert(offered, vim.tbl_map(opts.format_item, items))
+        cb(answers[#offered], 0)
+      end
+      Export.export_current("update", { clipboard = true })
+      UI.get_visible_results, UI.get_display_opts, vim.ui.select = og, od, os_
+      assert.are.same({ "a", "b", "c", "d" }, offered[1])
+      assert.are.same({ "b", "c", "d", "[Done]" }, offered[2])
+      assert.are.same({ "b", "d", "[Done]" }, offered[3])
+      assert.are.equal("UPDATE t SET b = 2, d = 4 WHERE a = 1 AND c = 3;", vim.fn.getreg('"'))
+    end)
+
+    it("stops asking once only one column is left to update", function()
+      local UI = require("abcql.ui")
+      local og, od, os_ = UI.get_visible_results, UI.get_display_opts, vim.ui.select
+      UI.get_visible_results = function()
+        return { headers = { "a", "b", "c" }, rows = { { "1", "2", "3" } } }
+      end
+      UI.get_display_opts = function()
+        return { query = "SELECT * FROM t" }
+      end
+      local calls = 0
+      vim.ui.select = function(items, _, cb)
+        calls = calls + 1
+        cb(items[1], 1)
+      end
+      Export.export_current("update", { clipboard = true })
+      UI.get_visible_results, UI.get_display_opts, vim.ui.select = og, od, os_
+      assert.are.equal(2, calls)
+      assert.are.equal("UPDATE t SET c = 3 WHERE a = 1 AND b = 2;", vim.fn.getreg('"'))
+    end)
+
+    it("exports nothing when the picker is cancelled", function()
+      local UI = require("abcql.ui")
+      local og, od, os_ = UI.get_visible_results, UI.get_display_opts, vim.ui.select
+      UI.get_visible_results = function()
+        return { headers = { "id", "name" }, rows = { { "1", "x" } } }
+      end
+      UI.get_display_opts = function()
+        return {}
+      end
+      vim.ui.select = function(_, _, cb)
+        cb(nil, nil)
+      end
+      vim.fn.setreg('"', "untouched")
+      Export.export_current("update", { clipboard = true })
+      UI.get_visible_results, UI.get_display_opts, vim.ui.select = og, od, os_
+      assert.are.equal("untouched", vim.fn.getreg('"'))
+    end)
+  end)
 end)

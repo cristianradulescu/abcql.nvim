@@ -4,7 +4,7 @@ local Export = {}
 ---@alias ExportResult { success: boolean, filepath: string?, clipboard: boolean?, lines: integer?, error: string? }
 ---@alias ExportScope "all"|"cell"|"row"|"column"
 ---@alias ExportTarget { col: integer?, row: any[]? } -- the result cell an export scope is taken from: column index, row values
----@alias ExportContext { table: string?, adapter: abcql.db.adapter.Adapter? } -- where the results came from: the one table the query read (nil when unclear) and the datasource adapter
+---@alias ExportContext { table: string?, adapter: abcql.db.adapter.Adapter?, key_indices: integer[]? } -- where the results came from: the one table the query read (nil when unclear), the datasource adapter, and the result columns picked as WHERE condition (formats that need them)
 ---@alias ExportOptions { filepath: string?, clipboard: boolean?, context: ExportContext? }
 
 local Registry = require("abcql.export.registry")
@@ -15,6 +15,7 @@ local Values = require("abcql.export.values")
 local Rows = require("abcql.export.rows")
 local Markdown = require("abcql.export.markdown")
 local Insert = require("abcql.export.insert")
+local Update = require("abcql.export.update")
 
 -- Register built-in formats
 Registry.register("csv", CSV.export, "comma-separated table, RFC 4180 quoting")
@@ -24,9 +25,10 @@ Registry.register("values", Values.export, "one comma-separated line for IN (...
 Registry.register("rows", Rows.export, "one value per line")
 Registry.register("markdown", Markdown.export, "GitHub-style pipe table")
 Registry.register("insert", Insert.export, "INSERT INTO statement (<table> placeholder if unclear)")
+Registry.register("update", Update.export, "UPDATE per row, you pick the WHERE column")
 
 -- File extension per format when it differs from the format name
-local EXTENSIONS = { markdown = "md", insert = "sql" }
+local EXTENSIONS = { markdown = "md", insert = "sql", update = "sql" }
 
 --- Generate a default filename with timestamp
 --- @param format string The export format (e.g., "csv", "json")
@@ -186,11 +188,67 @@ local function source_context()
   }
 end
 
+--- Formats that need the user to pick the result columns used as their WHERE condition
+local KEY_FORMATS = { update = true }
+
+--- Ask which result columns form the WHERE condition. vim.ui.select has no multi-select, so
+--- columns are picked one at a time (each shows what is picked so far) until "Done"; the last
+--- column left is never offered, since at least one must remain to be updated. Cancelling at any
+--- point cancels the export.
+--- @param headers string[]
+--- @param callback fun(key_indices: integer[]) Called with the picked column indices, in pick order
+local function select_keys(headers, callback)
+  local picked, is_picked = {}, {}
+  local DONE = 0
+
+  local function ask()
+    local items = {}
+    for i = 1, #headers do
+      if not is_picked[i] then
+        table.insert(items, i)
+      end
+    end
+    -- everything but one column picked: nothing else to ask
+    if #items <= 1 then
+      return callback(picked)
+    end
+    if #picked > 0 then
+      table.insert(items, DONE)
+    end
+
+    local chosen = #picked > 0
+        and table.concat(
+          vim.tbl_map(function(i)
+            return headers[i]
+          end, picked),
+          " AND "
+        )
+      or nil
+    vim.ui.select(items, {
+      prompt = chosen and ("WHERE " .. chosen .. " AND ...") or "WHERE column:",
+      format_item = function(i)
+        return i == DONE and "[Done]" or headers[i]
+      end,
+    }, function(choice)
+      if choice == nil then
+        return
+      elseif choice == DONE then
+        return callback(picked)
+      end
+      table.insert(picked, choice)
+      is_picked[choice] = true
+      ask()
+    end)
+  end
+
+  ask()
+end
+
 --- Export (part of) the current query results from the UI, to a file or the clipboard.
 --- This is the single entry point for the export commands and the results yank keys.
 --- @param format? string The export format; asked for with vim.ui.select when nil or empty
 --- @param opts? ExportOptions|{ scope: ExportScope? } scope defaults to "all"; the cell/row/column is taken at the cursor
---- @return ExportResult? result Result object (nil when the format is still being asked for)
+--- @return ExportResult? result Result object (nil when the format or a WHERE column is still being asked for)
 function Export.export_current(format, opts)
   opts = opts or {}
   local scope = opts.scope or "all"
@@ -212,14 +270,27 @@ function Export.export_current(format, opts)
   end
 
   opts = vim.tbl_extend("keep", opts, { context = source_context() })
+  local filtered_rows = filtered and #visible.rows or nil
+
+  local function run(chosen)
+    if not KEY_FORMATS[chosen] then
+      return Export.finish(chosen, data, opts, scope, filtered_rows)
+    end
+    select_keys(data.headers, function(key_indices)
+      opts.context = vim.tbl_extend("force", opts.context, { key_indices = key_indices })
+      Export.finish(chosen, data, opts, scope, filtered_rows)
+    end)
+  end
 
   if not format or format == "" then
-    select_format(opts.clipboard and "Copy as:" or "Export as:", function(choice)
-      Export.finish(choice, data, opts, scope, filtered and #visible.rows or nil)
-    end)
+    select_format(opts.clipboard and "Copy as:" or "Export as:", run)
     return nil
   end
-  return Export.finish(format, data, opts, scope, filtered and #visible.rows or nil)
+  if KEY_FORMATS[format] then
+    run(format)
+    return nil
+  end
+  return run(format)
 end
 
 --- Ask whether to open an exported file; it opens in the editor window so the results/tree
