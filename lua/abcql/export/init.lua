@@ -198,6 +198,27 @@ function Export.export_current(format, opts)
   return Export.finish(format, data, opts, scope, filtered and #visible.rows or nil)
 end
 
+--- Ask whether to open an exported file; it opens in the editor window so the results/tree
+--- panels (pinned with winfixbuf) keep their buffers
+--- @param filepath string
+local function offer_to_open(filepath)
+  vim.ui.select(
+    { "Yes", "No" },
+    { prompt = "Open " .. vim.fn.fnamemodify(filepath, ":t") .. " in editor?" },
+    function(choice)
+      if choice ~= "Yes" then
+        return
+      end
+      local UI = require("abcql.ui")
+      local win = UI.get_editor_win()
+      if win then
+        vim.api.nvim_set_current_win(win)
+      end
+      vim.cmd.edit(vim.fn.fnameescape(filepath))
+    end
+  )
+end
+
 --- Export already-resolved data and tell the user how it went
 --- @param format string
 --- @param data QueryResult
@@ -222,6 +243,7 @@ function Export.finish(format, data, opts, scope, filtered_rows)
     vim.notify(string.format("Copied %s as %s to clipboard%s", what, format, note), vim.log.levels.INFO)
   else
     vim.notify(string.format("Exported to: %s%s", result.filepath, note), vim.log.levels.INFO)
+    offer_to_open(result.filepath)
   end
   return result
 end

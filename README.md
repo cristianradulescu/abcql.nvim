@@ -506,7 +506,7 @@ After executing a query and viewing results, you can export them to various form
 
 #### User Commands
 
-- `:AbcqlExport [format]` - Export current results to a file; `format` is any registered export format (`csv`, `tsv`, `json`, `values`, `rows`, `markdown`; `json` requires `jq` installed). Without a `format`, a picker lists the available ones
+- `:AbcqlExport [format]` - Export current results to a file (then asks whether to open it in the editor); `format` is any registered export format (`csv`, `tsv`, `json`, `values`, `rows`, `markdown`; `json` requires `jq` installed). Without a `format`, a picker lists the available ones
 
 - `:AbcqlExportCopy [format]` - Copy current results to the clipboard (`+` and unnamed registers) instead of a file; `format` is any registered export format; without one, a picker asks for it
 

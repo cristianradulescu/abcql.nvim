@@ -1773,4 +1773,10 @@ function UI.get_editor_buf()
   return state.editor_buf
 end
 
+--- Editor window anchoring the layout (nil when closed)
+--- @return number|nil
+function UI.get_editor_win()
+  return UI.is_valid() and state.editor_win or nil
+end
+
 return UI
