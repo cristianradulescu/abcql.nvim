@@ -222,3 +222,37 @@ describe("MySQLAdapter schema queries", function()
     end
   end)
 end)
+
+describe("MySQLAdapter get_databases", function()
+  local Query = require("abcql.db.query")
+  local original
+
+  before_each(function()
+    original = Query.execute_async
+    Query.execute_async = function(_, _, callback)
+      callback({
+        rows = {
+          { "information_schema" },
+          { "mysql" },
+          { "other_app" },
+          { "performance_schema" },
+          { "shop" },
+          { "sys" },
+        },
+      }, nil)
+    end
+  end)
+
+  after_each(function()
+    Query.execute_async = original
+  end)
+
+  it("returns the configured database plus the system schemas, not other databases", function()
+    local adapter = MySQLAdapter.new({ database = "shop" })
+    local got
+    adapter:get_databases(function(databases)
+      got = databases
+    end)
+    assert.are.same({ "information_schema", "mysql", "performance_schema", "shop", "sys" }, got)
+  end)
+end)

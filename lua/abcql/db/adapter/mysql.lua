@@ -29,11 +29,26 @@ function MySQLAdapter:execute_query(query, opts, callback)
   return Query.execute_async(self, query, callback, opts)
 end
 
---- Fetch list of all databases asynchronously
+--- Schemas every MySQL/MariaDB server ships with (lowercase). Listed next to the configured
+--- database so they can be queried without a datasource of their own.
+MySQLAdapter.SYSTEM_DATABASES = {
+  information_schema = true,
+  performance_schema = true,
+  mysql = true,
+  sys = true,
+}
+
+--- Whether a database name is one of the built-in system schemas
+--- @param name string
+--- @return boolean
+function MySQLAdapter:is_system_database(name)
+  return MySQLAdapter.SYSTEM_DATABASES[name:lower()] == true
+end
+
+--- Fetch the configured database plus the system schemas visible on the server
 --- @param callback function Called with (databases, error) where databases is array of database names
 function MySQLAdapter:get_databases(callback)
-  local query = "SHOW DATABASES like '" .. self:escape_value(self.config.database) .. "'"
-  Query.execute_async(self, query, function(result, err)
+  Query.execute_async(self, "SHOW DATABASES", function(result, err)
     if err then
       callback(nil, err)
       return
@@ -41,8 +56,9 @@ function MySQLAdapter:get_databases(callback)
 
     local databases = {}
     for _, row in ipairs(result.rows) do
-      if row[1] then
-        table.insert(databases, row[1])
+      local name = row[1]
+      if name and (name == self.config.database or self:is_system_database(name)) then
+        table.insert(databases, name)
       end
     end
 

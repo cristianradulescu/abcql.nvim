@@ -501,7 +501,16 @@ function Tree.load_databases(datasource_node, callback)
       table.insert(datasource_node.children, db_node)
     end
 
+    -- system schemas (information_schema, ...) go after the user's own databases
+    local adapter = datasource.adapter
+    local function is_system(name)
+      return adapter.is_system_database ~= nil and adapter:is_system_database(name)
+    end
     table.sort(datasource_node.children, function(a, b)
+      local sa, sb = is_system(a.name), is_system(b.name)
+      if sa ~= sb then
+        return sb
+      end
       return a.name < b.name
     end)
 
