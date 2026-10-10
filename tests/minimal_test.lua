@@ -2,7 +2,7 @@ vim.opt.runtimepath:append(".")
 
 require("abcql").setup({
   datasources = {
-    test = "mysql://dbuser:dbpassword@localhost:3306/bookstore",
+    test = "mysql://dbuser:dbpassword@localhost:33060/employees",
   },
 })
 
@@ -43,7 +43,7 @@ end)
 -- Test 2: Sync query (no callback)
 print("--- Test 2: Sync Query (no callback) ---")
 local sync_results, sync_err =
-  adapter:execute_query("SELECT last_name FROM authors LIMIT 3", { skip_column_names = false })
+  adapter:execute_query("SELECT last_name FROM employees LIMIT 3", { skip_column_names = false })
 if sync_err then
   print("❌ Sync query failed: " .. sync_err)
 else

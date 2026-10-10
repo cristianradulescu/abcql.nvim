@@ -42,7 +42,8 @@ nvim --headless --noplugin -u tests/minimal_init.lua \
 make build   # bin/abcql-backend must exist first
 nvim --headless -u NONE -c "luafile tests/minimal_test.lua"
 ```
-- Connects to `mysql://dbuser:dbpassword@localhost:3306/bookstore`, executed through `abcql-backend`.
+- Connects to `mysql://dbuser:dbpassword@localhost:33060/employees` (the docker stack below,
+  `make test-db-up`), executed through `abcql-backend`.
 - Fails offline, or if `bin/abcql-backend` hasn't been built — not suitable for CI without both.
 
 **Run a single Lua spec file:**
@@ -55,8 +56,9 @@ nvim --headless --noplugin -u tests/minimal_init.lua \
 
 `compose.yml` + `docker/load-employees.sh` spin up MySQL and import
 [datacharmer/test_db](https://github.com/datacharmer/test_db)'s `employees` database (6 tables, ~300k
-rows) for manually exercising the tree/completion/results UI against a richer schema than `bookstore`.
-Not used by `make test`. See `docker/README.md`; quick start: `make test-db-up`.
+rows). The smoke test above runs against it, and it's also useful for manually exercising the
+tree/completion/results UI. `make test` doesn't start it. See `docker/README.md`; quick start:
+`make test-db-up`.
 
 `examples/.abcql.lua` (datasource pointing at this container) and `examples/queries.sql` (sample
 `SELECT`s against it) are ready to copy/open for manual testing — see "Trying it Out" in `README.md`.
