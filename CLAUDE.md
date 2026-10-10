@@ -21,18 +21,21 @@ make check          # lint + format
 make test           # test-backend (go test ./backend/...) + the Lua test suite below
 ```
 
+Rebuild `bin/abcql-backend` (`make build`) after every change under `backend/` and after pulling: the
+Lua side and the Go backend share a protocol and must match.
+
 `bin/abcql-backend` must exist for anything that actually executes a query (the live-MySQL smoke test
 below, or manual testing) — run `make build` first; the mocked Lua unit tests don't need it.
 
 The Lua test suite runs via `PlenaryBustedDirectory` against `tests/minimal_init.lua` (auto-clones
 `nvim-lua/plenary.nvim` to `/tmp/plenary.nvim` if missing, or set `PLENARY_DIR`), followed by
 `tests/minimal_test.lua`, a headless smoke test against a real MySQL connection
-(`mysql://dbuser:dbpassword@localhost:3306/bookstore`, executed through `abcql-backend`) — it needs
+(`mysql://dbuser:dbpassword@localhost:33060/employees`, executed through `abcql-backend`) — it needs
 that server reachable (and the backend built) to pass.
 
-`make test-db-up` starts a separate `compose.yml` stack (see `docker/README.md`) that loads
-datacharmer/test_db's `employees` database — a richer schema for manually testing the tree/completion/
-results UI. It's unrelated to the `bookstore` fixture above and not part of `make test`.
+`make test-db-up` starts that server: a `compose.yml` stack (see `docker/README.md`) that loads
+datacharmer/test_db's `employees` database — also a richer schema for manually testing the
+tree/completion/results UI. `make test` doesn't start it; bring it up first.
 
 To run a single spec file directly (keep the `minimal_init` option: without it plenary's child
 Neovim loads the user's real config, including any language servers enabled there):
@@ -90,6 +93,16 @@ SELECT ... INTO, anything not confidently a plain SELECT). Top-level detection r
 `Statements.skip_literal` (the quote/comment skipping shared with `Statements.scan`). The buffer
 and history keep the original SQL; `results.auto_limit` drives the `auto LIMIT N` footer/winbar
 hint.
+A request may instead carry `statements: [{sql, max_rows}]` (it takes precedence over `sql`): the
+backend (`runBatch` in `exec.go`) takes one `*sql.Conn` from the pool (`db.Conn`, not the pool itself) and
+runs them in order on it, so a transaction, `SET @var`, `USE` or temporary table carries over from
+one statement to the next. `timeout_ms` applies per statement, each statement has its own `max_rows`
+(auto-LIMIT sends `0` for statements that carry a LIMIT), and it stops at the first error. The
+response then has `results` (one single-statement-shaped response per statement that succeeded) and, on
+failure, `error` plus the 0-based `failed_index` (exit status 1 but still valid JSON; `parse_result`
+in `abcql.backend` returns such a response whole instead of as an error string). Nothing is ever
+committed for the user: closing the connection when the process exits makes the server roll back an
+open transaction. There is no daemon, so session state lives only for one batch.
 `Backend.invoke` returns the `vim.system` handle so `abcql.db.query.cancel` can kill a running
 query (reported back as the error string `Query cancelled`).
 
@@ -238,18 +251,31 @@ UPDATE/DELETE restricted by an inner JOIN with ON/USING (`has_inner_join`; comma
 LEFT/RIGHT joins and a JOIN without ON/USING are still flagged). Detection is conservative
 (unsure → not flagged). The switch is datasource `lint_dangerous` > `query.lint_dangerous`
 (default on), via `Query.lint_dangerous_enabled`. `abcql.db.query` has three entry points,
-`execute_query_at_cursor`, `execute_selection` and `execute_buffer` (sequential, stops on first
+`execute_query_at_cursor`, `execute_selection` and `execute_buffer` (one batch, stops on first
 error; when any statement is dangerous it shows one upfront prompt listing them — whatever the
-policy, replacing the batch prompt — and runs the batch with `dangerous_confirmed = true`, so
-declining runs nothing), all of which go through `Database.ensure_datasource` and then
-`Query.run`. `Query.run` is the single execution path: readonly guard → confirmation float (policy: datasource `confirm` >
+policy, replacing the batch prompt — so declining runs nothing), all of which go through
+`Database.ensure_datasource`. The cursor and single-statement selection then use `Query.run`, the
+single-statement path: readonly guard → confirmation float (policy: datasource `confirm` >
 `query.confirm`, default only for writes; a dangerous statement always gets the float, with the
 reason in its title, whatever the policy or `opts.confirm`, unless `opts.dangerous_confirmed`;
 a single-statement selection goes through one `Query.run`; a selection holding several statements
-is split with `Statements.scan` and run as a batch like `execute_buffer`, since the backend takes
-one statement per call) → `UI.set_running` (winbar timer) → auto-LIMIT rewrite →
+is split with `Statements.scan` and run as one batch like `execute_buffer`) → `UI.set_running` (winbar timer) → auto-LIMIT rewrite →
 `Backend.invoke`
-(handle kept for `Query.cancel`) → `abcql.history` save → `UI.display`. Results are rendered by
+(handle kept for `Query.cancel`) → `abcql.history` save → `UI.display`. `Query.run` is the
+single-statement path (cursor, single-statement selection); a multi-statement selection and
+`execute_buffer` go through `run_batch` instead: the readonly guard and the up-front
+confirm/dangerous prompt (`run_statements`) and the per-statement auto-LIMIT happen first, then
+one `Query.execute_batch_async` request carries every statement (single connection, see above).
+The response is mapped back: each executed statement is saved to history in order, the last
+result (or the failing statement's error, whose lines get the error status) is displayed with the
+whole sent batch as `sent_query`, and `after_schema_change` runs for each executed statement (for every statement when the error
+names none). Cancelling kills the process, so no partial results arrive: the error becomes "Query
+cancelled; statements up to and including the one that was running may have been applied". Neither
+a cancel nor a timeout stops the running statement on the server (the connection just drops), so it
+may still complete and, in autocommit mode, commit; timeout errors get a note saying so. An open
+transaction is rolled back. The backend request is built once per batch (`run_batch`), so a
+malformed proxy URL is reported once. A selection's leading blank lines are trimmed and counted
+(`get_selection_query` returns the count) so reported line numbers stay on the buffer lines. Results are rendered by
 `abcql.ui.display` (error strings, `write`-type results, and `select`-type tables). History
 navigation (`<C-o>`/`<C-i>`/`[h`/`]h` in the results buffer, or `:AbcqlHistoryBack`/`Forward`, both
 through `UI.history_back`/`history_forward`) replays past query+result/error pairs into the same

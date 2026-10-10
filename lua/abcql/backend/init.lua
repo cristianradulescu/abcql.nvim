@@ -36,7 +36,10 @@ local function parse_result(result)
   local ok, decoded = pcall(vim.json.decode, result.stdout or "")
 
   if ok and type(decoded) == "table" then
-    if decoded.error and decoded.error ~= "" then
+    -- A batch that failed part-way still carries the results before the
+    -- failure (`results`) and which statement failed (`failed_index`, 0-based),
+    -- so it is returned whole, with its `error` set, rather than as an error.
+    if decoded.error and decoded.error ~= "" and decoded.failed_index == nil then
       return nil, decoded.error
     end
     return decoded, nil
@@ -50,12 +53,13 @@ local function parse_result(result)
 end
 
 --- Default timeout (ms) passed to vim.system, kept comfortably above the
---- request's own timeout_ms so the backend gets a chance to report its own
---- timeout error before the process is killed outright.
+--- request's own timeout_ms (applied to getting a connection and to each statement of a batch) so the backend
+--- gets a chance to report its own timeout error before the process is killed
+--- outright.
 --- @param request table
 --- @return number
 local function process_timeout(request)
-  return (request.timeout_ms or 30000) + 5000
+  return (request.timeout_ms or 30000) * (#(request.statements or {}) + 1) + 5000
 end
 
 --- Invoke abcql-backend asynchronously with a JSON request.

@@ -32,8 +32,11 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
 
 ## Installation
 
-`abcql.nvim` ships with `abcql-backend`, a Go binary that executes your queries. It needs to be built
-once (and again after each plugin update) — see [Backend](#backend).
+> **Required step: build the backend.** `abcql.nvim` ships with `abcql-backend`, a Go binary that
+> executes your queries, and nothing runs until it is built. Run `make build` in the plugin directory
+> (or set `build = "make build"` in your plugin manager spec). **Re-run it after every plugin
+> update**: the Go backend and the Lua side must match, and a stale binary can fail or misbehave.
+> See [Backend](#backend).
 
 ### Using [lazy.nvim](https://github.com/folke/lazy.nvim)
 

@@ -66,6 +66,34 @@ function Query.execute_sync(adapter, query, opts)
   return to_query_result(response), nil
 end
 
+--- Execute several statements in one backend request: they run in order on a
+--- single connection, so a transaction, `SET @var` or temporary table carries
+--- over from one to the next. Stops at the first error.
+--- @param request table Backend request built by the adapter (connection fields, timeout); its `sql` is replaced
+--- @param statements { sql: string, max_rows: number }[] Per-statement row cap (0 = uncapped)
+--- @param callback fun(results: QueryResult[]|nil, err: string|nil, failed_index: number|nil) `results` holds the
+--- statements that succeeded (also on failure, when `failed_index` is the 1-based number of the one that did not)
+--- @return table|nil handle vim.system handle (nil when the backend could not be started)
+function Query.execute_batch_async(request, statements, callback)
+  request.sql = nil
+  request.max_rows = nil
+  request.statements = statements
+
+  return Backend.invoke(request, function(response, err)
+    if not response then
+      callback(nil, err, nil)
+      return
+    end
+
+    local results = {}
+    for _, result in ipairs(response.results or {}) do
+      table.insert(results, to_query_result(result))
+    end
+    local failed = response.failed_index and response.failed_index + 1 or nil
+    callback(results, response.error ~= "" and response.error or nil, failed)
+  end)
+end
+
 --- Split a buffer into statements, honouring the `query.treesitter` setting.
 --- @param bufnr number|nil
 --- @return abcql.Statement[]
@@ -91,7 +119,8 @@ function Query.get_query_at_cursor(bufnr)
 end
 
 --- Text of the last visual selection in the current buffer
---- @return string
+--- @return string text Trimmed selection
+--- @return number|nil blank_lines Leading blank lines that were trimmed
 function Query.get_selection_query()
   local start_pos = vim.fn.getpos("'<")
   local end_pos = vim.fn.getpos("'>")
@@ -112,7 +141,9 @@ function Query.get_selection_query()
     lines[1] = lines[1]:sub(start_pos[3])
   end
   local text = table.concat(lines, "\n")
-  return vim.trim((text:gsub(";%s*$", "")))
+  -- Leading blank lines are dropped too; say how many, so line numbers stay right.
+  local _, blank_lines = text:match("^%s*"):gsub("\n", "")
+  return vim.trim((text:gsub(";%s*$", ""))), blank_lines
 end
 
 --- Decide whether a statement needs an interactive confirmation.
@@ -412,8 +443,121 @@ function Query.execute_query_at_cursor()
   )
 end
 
---- Run statements sequentially, stopping at the first error. The results
---- panel ends up showing the last statement.
+--- Run statements as one batch on a single backend connection, so session state
+--- (transactions, variables, temporary tables) carries over. Everything that can
+--- refuse or rewrite a statement (readonly, prompts, auto-LIMIT) has happened
+--- before this. The results panel ends up showing the last statement's result,
+--- or the error of the one that failed (the batch stops there); every executed
+--- statement is saved to history.
+--- @param bufnr number
+--- @param datasource Datasource
+--- @param statements abcql.Statement[]
+local function run_batch(bufnr, datasource, statements)
+  local UI = require("abcql.ui")
+  local History = require("abcql.history")
+
+  if running then
+    vim.notify("abcql: a query is already running (:AbcqlQueryCancel to stop it)", vim.log.levels.WARN)
+    return
+  end
+
+  local adapter = datasource.adapter
+  local database = adapter and adapter.config and adapter.config.database
+  local request = adapter:build_backend_request("", {})
+  local limit = Limit.for_datasource(datasource)
+
+  -- A statement bounded by a LIMIT (its own or the auto-LIMIT) is returned in
+  -- full; max_rows only caps statements without one.
+  local sent, to_send, limits = {}, {}, {}
+  for i, stmt in ipairs(statements) do
+    local sent_sql, limit_status = Limit.apply(stmt.text, limit)
+    sent[i] = sent_sql
+    limits[i] = limit_status
+    to_send[i] = { sql = sent_sql, max_rows = limit_status and 0 or request.max_rows }
+  end
+  local sent_batch = table.concat(sent, ";\n") .. ";"
+  local whole = {
+    bufnr = bufnr,
+    start_line = statements[1].start_line,
+    end_line = statements[#statements].end_line,
+  }
+  local function mark_of(stmt)
+    return { bufnr = bufnr, start_line = stmt.start_line, end_line = stmt.end_line }
+  end
+
+  local job = { query = sent_batch, datasource = datasource, started = vim.uv.hrtime() }
+  running = job
+  UI.set_running(sent_batch, datasource)
+  Status.running(whole)
+
+  local handle = Query.execute_batch_async(request, to_send, function(results, err, failed)
+    if running == job then
+      running = nil
+    end
+    UI.clear_running()
+    results = results or {}
+
+    local history_id, _
+    for i, result in ipairs(results) do
+      if limits[i] == "added" then
+        result.auto_limit = limit
+      end
+      _, history_id = History.save(statements[i].text, datasource.name, database, result, nil)
+    end
+
+    -- The statement shown: the one that failed, else the last one that ran.
+    -- An error naming no statement (the process was killed, the connection
+    -- failed) can't say how far the batch got, so it covers the whole batch.
+    local stmt = statements[failed or #results]
+    local mark = stmt and mark_of(stmt) or whole
+    local text = stmt and stmt.text
+      or table.concat(
+        vim.tbl_map(function(s)
+          return s.text
+        end, statements),
+        ";\n"
+      )
+    if err then
+      -- Killing the process or timing out only drops the connection: the
+      -- statement that was running may still complete on the server.
+      if err == "Query cancelled" then
+        err = "Query cancelled; statements up to and including the one that was running may have been applied"
+      elseif err:lower():find("timeout", 1, true) or err:lower():find("deadline", 1, true) then
+        err = err .. " (the statement may still complete on the server)"
+      end
+      _, history_id = History.save(text, datasource.name, database, nil, err)
+    end
+    stmt = stmt or statements[1]
+    Status.done(mark, err)
+    UI.display(err or results[#results], nil, {
+      datasource = datasource,
+      query = text,
+      sent_query = sent_batch,
+      history_id = history_id,
+    })
+
+    -- Without a failing statement any of them may have completed (a DDL one
+    -- changes the schema); the check is a no-op for the rest.
+    for i = 1, (err and not failed) and #statements or #results do
+      Query.after_schema_change(statements[i].text, datasource)
+    end
+    if failed then
+      vim.notify(
+        string.format("abcql: stopped at statement %d/%d (line %d)", failed, #statements, stmt.start_line),
+        vim.log.levels.WARN
+      )
+    elseif not err then
+      vim.notify(string.format("abcql: ran %d statement(s)", #statements), vim.log.levels.INFO)
+    end
+  end)
+
+  if running == job then
+    job.handle = handle
+  end
+end
+
+--- Run several statements as one batch (see run_batch) after the readonly
+--- guard and the confirmation prompts.
 --- @param bufnr number Buffer whose datasource runs them
 --- @param statements abcql.Statement[]
 local function run_statements(bufnr, statements)
@@ -455,31 +599,7 @@ local function run_statements(bufnr, statements)
     end
 
     local function run_all()
-      local index = 0
-      local function step()
-        index = index + 1
-        local stmt = statements[index]
-        if not stmt then
-          vim.notify(string.format("abcql: ran %d statement(s)", #statements), vim.log.levels.INFO)
-          return
-        end
-        Query.run(stmt.text, datasource, {
-          mark = { bufnr = bufnr, start_line = stmt.start_line, end_line = stmt.end_line },
-          confirm = false,
-          dangerous_confirmed = #dangers > 0,
-          on_done = function(_, err)
-            if err then
-              vim.notify(
-                string.format("abcql: stopped at statement %d/%d (line %d)", index, #statements, stmt.start_line),
-                vim.log.levels.WARN
-              )
-              return
-            end
-            step()
-          end,
-        })
-      end
-      step()
+      run_batch(bufnr, datasource, statements)
     end
 
     local preview = {}
@@ -506,10 +626,10 @@ local function run_statements(bufnr, statements)
   end)
 end
 
---- Execute the visually selected text. Several statements run one at a time
---- (the backend takes a single statement per call), like a buffer run.
+--- Execute the visually selected text. Several statements run as one batch on
+--- a single connection, like a buffer run.
 function Query.execute_selection()
-  local sql = Query.get_selection_query()
+  local sql, blank_lines = Query.get_selection_query()
   if sql == "" then
     vim.notify("abcql: no selection", vim.log.levels.WARN)
     return
@@ -524,7 +644,7 @@ function Query.execute_selection()
     return
   end
   -- Report buffer line numbers, not selection-relative ones.
-  local offset = vim.fn.getpos("'<")[2] - 1
+  local offset = vim.fn.getpos("'<")[2] - 1 + blank_lines
   for _, stmt in ipairs(statements) do
     stmt.start_line = stmt.start_line + offset
     stmt.end_line = stmt.end_line + offset
@@ -532,8 +652,9 @@ function Query.execute_selection()
   run_statements(vim.api.nvim_get_current_buf(), statements)
 end
 
---- Execute every statement in the current buffer sequentially, stopping at
---- the first error. The results panel ends up showing the last statement.
+--- Execute every statement in the current buffer as one batch on a single
+--- connection, stopping at the first error. The results panel ends up showing
+--- the last statement.
 function Query.execute_buffer()
   local bufnr = vim.api.nvim_get_current_buf()
   local statements = Query.get_statements(bufnr)

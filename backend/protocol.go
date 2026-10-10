@@ -40,18 +40,29 @@ func (f *flexInt) UnmarshalJSON(data []byte) error {
 
 // Request is the JSON object abcql-backend reads from stdin for the "exec" command.
 type Request struct {
-	Engine    string            `json:"engine"`
-	Host      string            `json:"host"`
-	Port      flexInt           `json:"port"`
-	User      string            `json:"user"`
-	Password  string            `json:"password"`
-	Database  string            `json:"database"`
-	Options   map[string]string `json:"options"`
-	Proxy     *ProxyConfig      `json:"proxy"`
-	SQL       string            `json:"sql"`
-	TimeoutMs flexInt           `json:"timeout_ms"`
+	Engine   string            `json:"engine"`
+	Host     string            `json:"host"`
+	Port     flexInt           `json:"port"`
+	User     string            `json:"user"`
+	Password string            `json:"password"`
+	Database string            `json:"database"`
+	Options  map[string]string `json:"options"`
+	Proxy    *ProxyConfig      `json:"proxy"`
+	SQL      string            `json:"sql"`
+	// Statements, when non-empty, replaces SQL: they run in order on one
+	// connection (so transactions, session variables and temporary tables
+	// carry over) and the response holds one entry per statement.
+	Statements []Statement `json:"statements"`
+	TimeoutMs  flexInt     `json:"timeout_ms"`
 	// MaxRows caps the number of rows returned for a result set; 0 means no
 	// cap. When the cap is hit, Response.Truncated is set.
+	MaxRows flexInt `json:"max_rows"`
+}
+
+// Statement is one entry of a batch request. Each carries its own row cap,
+// since a statement bounded by a LIMIT must not be capped.
+type Statement struct {
+	SQL     string  `json:"sql"`
 	MaxRows flexInt `json:"max_rows"`
 }
 
@@ -82,4 +93,9 @@ type Response struct {
 	Truncated    bool       `json:"truncated,omitempty"`
 	DurationMs   float64    `json:"duration_ms,omitempty"`
 	Error        string     `json:"error,omitempty"`
+	// Results and FailedIndex are only set for a batch request: one Response
+	// per statement that succeeded, and, when a statement failed, its 0-based
+	// index (Error then holds its message and later statements were not run).
+	Results     []*Response `json:"results,omitempty"`
+	FailedIndex *int        `json:"failed_index,omitempty"`
 }

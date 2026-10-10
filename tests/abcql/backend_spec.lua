@@ -105,6 +105,53 @@ describe("abcql.backend", function()
       assert.are.equal("table does not exist", err)
     end)
 
+    it("returns a partially failed batch whole, with its results and failed_index", function()
+      stub_config({ path = "/usr/local/bin/abcql-backend" })
+      vim.fn.executable = function()
+        return 1
+      end
+
+      vim.system = function(_, _)
+        return {
+          wait = function()
+            return {
+              code = 1,
+              stdout = '{"results":[{"query_type":"write"}],"error":"boom","failed_index":1}',
+              stderr = "",
+            }
+          end,
+        }
+      end
+
+      local response, err = Backend.invoke_sync({ statements = { { sql = "a" }, { sql = "b" } } })
+
+      assert.is_nil(err)
+      assert.are.equal("boom", response.error)
+      assert.are.equal(1, response.failed_index)
+      assert.are.equal(1, #response.results)
+    end)
+
+    it("allows a timeout for the connection and for every statement of a batch", function()
+      stub_config({ path = "/usr/local/bin/abcql-backend" })
+      vim.fn.executable = function()
+        return 1
+      end
+
+      local timeout
+      vim.system = function(_, opts)
+        timeout = opts.timeout
+        return {
+          wait = function()
+            return { code = 0, stdout = '{"results":[]}', stderr = "" }
+          end,
+        }
+      end
+
+      Backend.invoke_sync({ timeout_ms = 1000, statements = { { sql = "a" }, { sql = "b" } } })
+
+      assert.are.equal(3 * 1000 + 5000, timeout)
+    end)
+
     it("falls back to stderr when stdout is not valid JSON", function()
       stub_config({ path = "/usr/local/bin/abcql-backend" })
       vim.fn.executable = function()

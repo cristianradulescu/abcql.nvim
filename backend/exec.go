@@ -34,13 +34,33 @@ func execRequest(req *Request) (*Response, error) {
 	}
 }
 
-// runSQL runs the request's SQL on an already opened db, applying the
-// request's timeout and row cap, and times the whole round trip.
-func runSQL(db *sql.DB, req *Request, kindFor func(*sql.ColumnType) columnKind) (*Response, error) {
-	timeout := 30 * time.Second
+// execer is the part of *sql.DB and *sql.Conn the statement runners need, so
+// the same code runs a lone statement on the pool and a batch on one pinned
+// connection.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func requestTimeout(req *Request) time.Duration {
 	if req.TimeoutMs > 0 {
-		timeout = time.Duration(req.TimeoutMs) * time.Millisecond
+		return time.Duration(req.TimeoutMs) * time.Millisecond
 	}
+	return 30 * time.Second
+}
+
+// runSQL runs the request on an already opened db: a single statement on the
+// pool, or, when the request carries statements, a batch on one connection.
+func runSQL(db *sql.DB, req *Request, kindFor func(*sql.ColumnType) columnKind) (*Response, error) {
+	if len(req.Statements) > 0 {
+		return runBatch(db, req, kindFor)
+	}
+	return runStatement(db, req.SQL, int(req.MaxRows), requestTimeout(req), kindFor)
+}
+
+// runStatement runs one statement with its own timeout and row cap, and times
+// the round trip.
+func runStatement(conn execer, query string, maxRows int, timeout time.Duration, kindFor func(*sql.ColumnType) columnKind) (*Response, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -48,10 +68,10 @@ func runSQL(db *sql.DB, req *Request, kindFor func(*sql.ColumnType) columnKind) 
 
 	var resp *Response
 	var err error
-	if isWriteQuery(req.SQL) {
-		resp, err = execWrite(ctx, db, req.SQL)
+	if isWriteQuery(query) {
+		resp, err = execWrite(ctx, conn, query)
 	} else {
-		resp, err = execQuery(ctx, db, req.SQL, int(req.MaxRows), kindFor)
+		resp, err = execQuery(ctx, conn, query, maxRows, kindFor)
 	}
 	if err != nil {
 		return nil, err
@@ -61,7 +81,42 @@ func runSQL(db *sql.DB, req *Request, kindFor func(*sql.ColumnType) columnKind) 
 	return resp, nil
 }
 
-func execWrite(ctx context.Context, db *sql.DB, query string) (*Response, error) {
+// runBatch runs the request's statements in order on a single connection
+// (not the pool), each with its own timeout, stopping at the first error.
+// Nothing is ever committed on the user's behalf: when the connection closes
+// the server rolls back whatever transaction a script left open.
+//
+// A failing statement is reported inside the Response (its error, index and
+// the results before it), not as an error, so the caller still gets the
+// results of the statements that did run.
+func runBatch(db *sql.DB, req *Request, kindFor func(*sql.ColumnType) columnKind) (*Response, error) {
+	timeout := requestTimeout(req)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	conn, err := db.Conn(ctx)
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	start := time.Now()
+	resp := &Response{Results: make([]*Response, 0, len(req.Statements))}
+	for i, stmt := range req.Statements {
+		result, err := runStatement(conn, stmt.SQL, int(stmt.MaxRows), timeout, kindFor)
+		if err != nil {
+			resp.Error = err.Error()
+			resp.FailedIndex = &i
+			break
+		}
+		resp.Results = append(resp.Results, result)
+	}
+
+	resp.DurationMs = float64(time.Since(start)) / float64(time.Millisecond)
+	return resp, nil
+}
+
+func execWrite(ctx context.Context, db execer, query string) (*Response, error) {
 	result, err := db.ExecContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -160,7 +215,7 @@ func collectRows(rows rowScanner, kinds []columnKind, maxRows int) ([][]string, 
 	return result, truncated, nil
 }
 
-func execQuery(ctx context.Context, db *sql.DB, query string, maxRows int, kindFor func(*sql.ColumnType) columnKind) (*Response, error) {
+func execQuery(ctx context.Context, db execer, query string, maxRows int, kindFor func(*sql.ColumnType) columnKind) (*Response, error) {
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err

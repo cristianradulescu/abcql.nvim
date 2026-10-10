@@ -254,10 +254,16 @@ describe("Query", function()
     end)
 
     describe("in a buffer run", function()
-      local ran, buf
+      local ran, buf, batches
 
       local function floating()
         return vim.api.nvim_win_get_config(vim.api.nvim_get_current_win()).relative ~= ""
+      end
+
+      local function set_query(opts)
+        for k, v in pairs(opts) do
+          require("abcql.config").query[k] = v
+        end
       end
 
       local function run_buffer(policy)
@@ -276,9 +282,15 @@ describe("Query", function()
           end,
         }
         ran = {}
+        batches = {}
         package.loaded["abcql.backend"].invoke = function(request, callback)
-          table.insert(ran, request.sql)
-          callback({ query_type = "write", affected_rows = 1 }, nil)
+          table.insert(batches, request)
+          local results = {}
+          for _, stmt in ipairs(request.statements) do
+            table.insert(ran, stmt.sql)
+            table.insert(results, { query_type = "write", affected_rows = 1 })
+          end
+          callback({ results = results }, nil)
           return {}
         end
         buf = vim.api.nvim_create_buf(false, true)
@@ -323,7 +335,171 @@ describe("Query", function()
         assert.are.same({ "INSERT INTO a VALUES (1)", "UPDATE b SET x = 1", "DELETE FROM c WHERE id = 1" }, ran)
       end)
 
-      it("runs a multi-statement selection one statement at a time", function()
+      it("sends the whole buffer in one request with a row cap per statement", function()
+        run_buffer("never")
+        vim.api.nvim_win_close(0, true)
+        ran = {}
+        batches = {}
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+          "SELECT * FROM a;",
+          "SELECT * FROM b LIMIT 5;",
+          "SET @x = 1;",
+        })
+        set_query({ confirm = "never", max_rows = 50, auto_limit = 0 })
+        Query.execute_buffer()
+        assert.are.equal(1, #batches)
+        assert.is_nil(batches[1].sql)
+        assert.are.same({
+          { sql = "SELECT * FROM a", max_rows = nil },
+          { sql = "SELECT * FROM b LIMIT 5", max_rows = 0 },
+          { sql = "SET @x = 1", max_rows = nil },
+        }, batches[1].statements)
+      end)
+
+      it("applies the auto-LIMIT per statement", function()
+        run_buffer("never")
+        vim.api.nvim_win_close(0, true)
+        batches = {}
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "SELECT * FROM a;", "SET @x = 1;" })
+        set_query({ confirm = "never", auto_limit = 20 })
+        Query.execute_buffer()
+        assert.are.same({
+          { sql = "SELECT * FROM a LIMIT 20", max_rows = 0 },
+          { sql = "SET @x = 1" },
+        }, batches[1].statements)
+      end)
+
+      describe("displaying the batch", function()
+        local displayed, saved, marks
+
+        before_each(function()
+          run_buffer("never")
+          vim.api.nvim_win_close(0, true)
+          displayed, saved, marks = {}, {}, {}
+          package.loaded["abcql.ui"].display = function(results, _, opts)
+            table.insert(displayed, { results = results, opts = opts })
+          end
+          package.loaded["abcql.history"].save = function(query, _, _, result, err)
+            table.insert(saved, { query = query, result = result, err = err })
+            return true, "id" .. #saved
+          end
+          local Status = require("abcql.ui.status")
+          Status.done = function(mark, err)
+            table.insert(marks, { mark = mark, err = err })
+          end
+          package.loaded["abcql.db.query"] = nil
+          Query = require("abcql.db.query")
+          vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "SET @x = 1;", "SELECT @x;", "SELECT 2;" })
+          set_query({ confirm = "never", auto_limit = 0 })
+        end)
+
+        it("saves every statement and shows the last result", function()
+          Query.execute_buffer()
+          assert.are.equal(3, #saved)
+          assert.are.equal("SELECT @x", saved[2].query)
+          assert.are.equal(1, #displayed)
+          assert.are.equal("SET @x = 1;\nSELECT @x;\nSELECT 2;", displayed[1].opts.sent_query)
+          assert.are.equal("id3", displayed[1].opts.history_id)
+          assert.are.same({ bufnr = buf, start_line = 3, end_line = 3 }, marks[1].mark)
+        end)
+
+        it("shows the failing statement's error and keeps the earlier results", function()
+          package.loaded["abcql.backend"].invoke = function(_, callback)
+            callback({ results = { { query_type = "write" } }, error = "boom", failed_index = 1 }, nil)
+            return {}
+          end
+          Query.execute_buffer()
+          assert.are.equal(2, #saved)
+          assert.is_nil(saved[1].err)
+          assert.are.equal("boom", saved[2].err)
+          assert.are.equal("SELECT @x", saved[2].query)
+          assert.are.equal("boom", displayed[1].results)
+          assert.are.same({ bufnr = buf, start_line = 2, end_line = 2 }, marks[1].mark)
+          assert.are.equal("boom", marks[1].err)
+        end)
+
+        it("marks the first statement when it is the one that failed", function()
+          package.loaded["abcql.backend"].invoke = function(_, callback)
+            callback({ error = "boom", failed_index = 0 }, nil)
+            return {}
+          end
+          Query.execute_buffer()
+          assert.are.equal(1, #saved)
+          assert.are.equal("SET @x = 1", saved[1].query)
+          assert.are.equal("boom", displayed[1].results)
+          assert.are.same({ bufnr = buf, start_line = 1, end_line = 1 }, marks[1].mark)
+        end)
+
+        it("covers the whole batch when an error names no statement", function()
+          package.loaded["abcql.backend"].invoke = function(_, callback)
+            callback(nil, "dial tcp 127.0.0.1:3306: connect: connection refused")
+            return {}
+          end
+          Query.execute_buffer()
+          assert.are.equal(1, #saved)
+          assert.are.equal(saved[1].query, displayed[1].opts.query)
+          assert.are.same({ bufnr = buf, start_line = 1, end_line = 3 }, marks[1].mark)
+          assert.is_nil(displayed[1].results:find("may have been applied", 1, true))
+        end)
+
+        it("notes that a timed out statement may still complete on the server", function()
+          package.loaded["abcql.backend"].invoke = function(_, callback)
+            callback({ error = "context deadline exceeded", failed_index = 1 }, nil)
+            return {}
+          end
+          Query.execute_buffer()
+          assert.is_not_nil(displayed[1].results:find("may still complete on the server", 1, true))
+        end)
+
+        it("checks every statement for a schema change when the error names none", function()
+          local checked = {}
+          Query.after_schema_change = function(sql)
+            table.insert(checked, sql)
+          end
+          package.loaded["abcql.backend"].invoke = function(_, callback)
+            callback(nil, "Query cancelled")
+            return {}
+          end
+          Query.execute_buffer()
+          assert.are.same({ "SET @x = 1", "SELECT @x", "SELECT 2" }, checked)
+        end)
+
+        it("refuses a batch with a write on a readonly datasource", function()
+          package.loaded["abcql.db"].ensure_datasource = function(_, callback)
+            callback({ name = "prod", readonly = true, adapter = {} })
+          end
+          vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "SELECT 1;", "UPDATE a SET x = 1 WHERE id = 1;" })
+          batches = {}
+          Query.execute_buffer()
+          assert.are.same({}, batches)
+          assert.is_not_nil(displayed[1].results:find("readonly", 1, true))
+        end)
+
+        it("keeps buffer line numbers when the selection starts on blank lines", function()
+          vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "", "", "SELECT 1;", "DELETE FROM b;" })
+          vim.cmd("normal! ggVG\27")
+          Query.execute_selection()
+          local body = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+          assert.is_not_nil(body:find("-- line 4: DELETE without WHERE", 1, true))
+          vim.api.nvim_feedkeys("q", "x", false)
+
+          package.loaded["abcql.config"].query.lint_dangerous = false
+          Query.execute_selection()
+          assert.are.same({ bufnr = buf, start_line = 4, end_line = 4 }, marks[1].mark)
+        end)
+
+        it("warns that earlier statements may have been applied when cancelled", function()
+          package.loaded["abcql.backend"].invoke = function(_, callback)
+            callback(nil, "Query cancelled")
+            return {}
+          end
+          Query.execute_buffer()
+          assert.is_not_nil(displayed[1].results:find("up to and including the one that was running", 1, true))
+          assert.are.equal(1, #saved)
+        end)
+      end)
+
+      it("runs a multi-statement selection as one batch", function()
         run_buffer("never")
         vim.api.nvim_win_close(0, true)
         ran = {}
@@ -337,6 +513,7 @@ describe("Query", function()
         Query.execute_selection()
         assert.is_false(floating())
         assert.are.same({ "SELECT * FROM a LIMIT 100", "SELECT * FROM b LIMIT 100", "SELECT * FROM c LIMIT 100" }, ran)
+        assert.are.equal(1, #batches)
       end)
     end)
 

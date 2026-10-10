@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,5 +106,155 @@ func TestSQLiteDSNOptions(t *testing.T) {
 		if !strings.Contains(dsn, part) {
 			t.Errorf("sqliteDSN() = %q, missing %q", dsn, part)
 		}
+	}
+}
+
+func sqliteBatch(path string, statements ...Statement) *Request {
+	return &Request{Engine: "sqlite", Database: path, Statements: statements}
+}
+
+func TestSQLiteBatchSharesConnection(t *testing.T) {
+	path := newSQLiteFile(t)
+	resp, err := execRequest(sqliteBatch(path,
+		Statement{SQL: "CREATE TEMPORARY TABLE tmp (n INTEGER)"},
+		Statement{SQL: "INSERT INTO tmp VALUES (7)"},
+		Statement{SQL: "SELECT n FROM tmp"},
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Error != "" || resp.FailedIndex != nil || len(resp.Results) != 3 {
+		t.Fatalf("resp = %+v, want 3 results and no error", resp)
+	}
+	if got := resp.Results[2]; got.QueryType != "select" || got.Rows[0][0] != "7" {
+		t.Errorf("last result = %+v, want the temp table row", got)
+	}
+}
+
+func TestSQLiteBatchRollback(t *testing.T) {
+	path := newSQLiteFile(t)
+	mustExec(t, path, "CREATE TABLE t (id INTEGER)")
+	_, err := execRequest(sqliteBatch(path,
+		Statement{SQL: "BEGIN"},
+		Statement{SQL: "INSERT INTO t VALUES (1)"},
+		Statement{SQL: "ROLLBACK"},
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := mustExec(t, path, "SELECT * FROM t"); resp.RowCount != 0 {
+		t.Errorf("row_count = %d, want 0 after ROLLBACK", resp.RowCount)
+	}
+}
+
+func TestSQLiteBatchOpenTransactionIsNotCommitted(t *testing.T) {
+	path := newSQLiteFile(t)
+	mustExec(t, path, "CREATE TABLE t (id INTEGER)")
+	_, err := execRequest(sqliteBatch(path,
+		Statement{SQL: "BEGIN"},
+		Statement{SQL: "INSERT INTO t VALUES (1)"},
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := mustExec(t, path, "SELECT * FROM t"); resp.RowCount != 0 {
+		t.Errorf("row_count = %d, want 0: an unfinished transaction must not be committed", resp.RowCount)
+	}
+}
+
+func TestSQLiteBatchStopsAtFirstError(t *testing.T) {
+	path := newSQLiteFile(t)
+	mustExec(t, path, "CREATE TABLE t (id INTEGER)")
+	resp, err := execRequest(sqliteBatch(path,
+		Statement{SQL: "INSERT INTO t VALUES (1)"},
+		Statement{SQL: "SELECT * FROM missing"},
+		Statement{SQL: "INSERT INTO t VALUES (2)"},
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.FailedIndex == nil || *resp.FailedIndex != 1 || resp.Error == "" {
+		t.Fatalf("resp = %+v, want failed_index 1 and an error", resp)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].AffectedRows != 1 {
+		t.Errorf("results = %+v, want only the first insert", resp.Results)
+	}
+	if got := mustExec(t, path, "SELECT * FROM t"); got.RowCount != 1 {
+		t.Errorf("row_count = %d, want 1: the statement after the failure must not run", got.RowCount)
+	}
+}
+
+func TestSQLiteBatchRowCapPerStatement(t *testing.T) {
+	path := newSQLiteFile(t)
+	numbers := "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10) SELECT i FROM n"
+	resp, err := execRequest(sqliteBatch(path,
+		Statement{SQL: numbers, MaxRows: 3},
+		Statement{SQL: numbers},
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first := resp.Results[0]; first.RowCount != 3 || !first.Truncated {
+		t.Errorf("first = %d rows truncated %v, want 3 and true", first.RowCount, first.Truncated)
+	}
+	if second := resp.Results[1]; second.RowCount != 10 || second.Truncated {
+		t.Errorf("second = %d rows truncated %v, want 10 and false", second.RowCount, second.Truncated)
+	}
+}
+
+func TestSingleStatementResponseHasNoBatchFields(t *testing.T) {
+	var out bytes.Buffer
+	path := newSQLiteFile(t)
+	body, _ := json.Marshal(map[string]any{"engine": "sqlite", "database": path, "sql": "SELECT 1"})
+	if code := runExec(bytes.NewReader(body), &out); code != 0 {
+		t.Fatalf("exit code = %d, output %s", code, out.String())
+	}
+	if s := out.String(); strings.Contains(s, "results") || strings.Contains(s, "failed_index") {
+		t.Errorf("single-statement response %s has batch fields", s)
+	}
+}
+
+func TestRunExecPartialBatchFailureIsValidJSON(t *testing.T) {
+	var out bytes.Buffer
+	path := newSQLiteFile(t)
+	body, _ := json.Marshal(map[string]any{
+		"engine": "sqlite", "database": path,
+		"statements": []map[string]any{{"sql": "SELECT 1"}, {"sql": "SELECT * FROM missing"}},
+	})
+	if code := runExec(bytes.NewReader(body), &out); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	var resp Response
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("output %q is not valid JSON: %v", out.String(), err)
+	}
+	if len(resp.Results) != 1 || resp.FailedIndex == nil || *resp.FailedIndex != 1 {
+		t.Errorf("resp = %+v", resp)
+	}
+}
+
+func TestSQLiteBatchTimeoutStopsTheBatch(t *testing.T) {
+	path := newSQLiteFile(t)
+	mustExec(t, path, "CREATE TABLE t (id INTEGER)")
+	forever := "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT count(*) FROM n"
+	req := sqliteBatch(path,
+		Statement{SQL: "BEGIN"},
+		Statement{SQL: "INSERT INTO t VALUES (1)"},
+		Statement{SQL: forever},
+		Statement{SQL: "INSERT INTO t VALUES (2)"},
+	)
+	req.TimeoutMs = 50
+	resp, err := execRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.FailedIndex == nil || *resp.FailedIndex != 2 || resp.Error == "" {
+		t.Fatalf("resp = %+v, want failed_index 2 and an error", resp)
+	}
+	if len(resp.Results) != 2 {
+		t.Errorf("results = %d, want the 2 statements before the timeout", len(resp.Results))
+	}
+	if got := mustExec(t, path, "SELECT * FROM t"); got.RowCount != 0 {
+		t.Errorf("row_count = %d, want 0: later statements must not run and the open transaction must not be committed", got.RowCount)
 	}
 }

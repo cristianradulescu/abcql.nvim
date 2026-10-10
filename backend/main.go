@@ -6,6 +6,9 @@
 //	       "database":"shop","sql":"select 1"}' | abcql-backend exec
 //	echo '{"engine":"sqlite","database":"/path/to/app.db",
 //	       "sql":"select 1"}' | abcql-backend exec
+//
+// A request with a "statements" array of {"sql", "max_rows"} runs them in
+// order on one connection and answers with a "results" array.
 package main
 
 import (
@@ -58,6 +61,10 @@ func runExec(in io.Reader, out io.Writer) int {
 	}
 
 	writeResponse(out, resp)
+	if resp.Error != "" {
+		// A batch that failed part-way still carries its earlier results.
+		return 1
+	}
 	return 0
 }
 
