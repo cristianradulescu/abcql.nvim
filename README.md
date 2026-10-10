@@ -151,6 +151,7 @@ Table-style datasources accept these optional flags:
 | `highlight` | a highlight group name          | Colors the datasource name in the winbar (e.g. `"DiagnosticError"`)   |
 | `auto_limit`| a number, or `false`            | Overrides `query.auto_limit` for this datasource (see [Row limits](#row-limits)) |
 | `lint_dangerous` | `true`, `false`            | Overrides the global `query.lint_dangerous` switch for this datasource |
+| `session`   | `"persistent"`, `"oneshot"`    | Overrides `query.session` for this datasource (see [Persistent sessions](#persistent-sessions)) |
 
 ```lua
 prod = {
@@ -266,6 +267,7 @@ require("abcql").setup({
     auto_attach = true,     -- reuse the last picked datasource for new SQL buffers
     treesitter = true,      -- use the tree-sitter sql parser for statement boundaries if installed
     lint_dangerous = true,  -- warn about and always confirm UPDATE/DELETE without WHERE and TRUNCATE
+    session = "oneshot",    -- "persistent": one connection per SQL buffer kept across runs (MySQL only)
   },
 })
 ```
@@ -320,6 +322,7 @@ lists all datasource actions:
 | `Results`    | `AbcqlResultsToggle`                                                                         |
 | `Tree`       | `AbcqlTreeToggle`                                                                            |
 | `Query`      | `AbcqlQueryRun`, `AbcqlQueryRunSelection`, `AbcqlQueryRunBuffer`, `AbcqlQueryCancel`         |
+| `Session`    | `AbcqlTransactionCommit`, `AbcqlTransactionRollback`, `AbcqlSessionClose` (see [Persistent sessions](#persistent-sessions)) |
 | `Datasource` | `AbcqlDatasourceAttach [name]`, `AbcqlDatasourceAdd [local\|user]`, `AbcqlDatasourceUpdate [name]`, `AbcqlDatasourceList`, `AbcqlDatasourceReload` |
 | `History`    | `AbcqlHistoryPick`, `AbcqlHistoryBack`, `AbcqlHistoryForward`, `AbcqlHistoryInfo`, `AbcqlHistoryClear` |
 | `Schema`     | `AbcqlSchemaRefresh`                                                                         |
@@ -374,6 +377,56 @@ guard still applies first. Turn it off with `query.lint_dangerous = false` or pe
 
 While a query runs the results winbar shows `running… 1.2s (<C-c> cancel)`. Cancelling kills the
 backend process and records the attempt in history.
+
+### Persistent sessions
+
+By default every run opens its own connection, so a `BEGIN` or `SET @x = 1` is gone by the next
+run (statements run together, as a selection or a buffer run, do share one connection). Opt in
+with `query.session = "persistent"`, or per datasource with `session = "persistent"` (a datasource
+`session` beats `query.session`; the default is `"oneshot"`, which changes nothing):
+
+- **Per buffer.** Each SQL buffer gets its own `abcql-backend serve` process and one database
+  connection, opened on its first run. Transactions, `SET @var`, `USE`, `autocommit` and temporary
+  tables survive from one run to the next in that buffer. Buffers do not share sessions; the tree
+  and completion keep using their own connections.
+- **MySQL only.** A SQLite datasource in persistent mode is refused with an error (an open write
+  transaction would lock the file for everything else).
+- **Needs the `PROCESS` privilege.** Whether a transaction is open is read from the server
+  (`information_schema.innodb_trx`), never guessed from the SQL text. Without the privilege the
+  session is refused, and so is the run: abcql does not quietly fall back to one-shot. Grant it with
+  `GRANT PROCESS ON *.* TO 'user'@'host'`.
+- **Winbar.** The editor winbar shows `session`, `TX ● 3 rows` (in red, with `, N locked` when rows
+  are locked) while a transaction is open, `autocommit off` after `SET autocommit = 0`, and the
+  current database when `USE` moved it away from the datasource's. A bare `BEGIN` with nothing after
+  it does not show yet: the server does not list a transaction until it has done something.
+- **Commands.** `:AbcqlTransactionCommit` and `:AbcqlTransactionRollback` send COMMIT / ROLLBACK
+  through the buffer's session; `:AbcqlSessionClose` ends it.
+- **Implicit commits are confirmed.** MySQL silently commits an open transaction before `BEGIN` /
+  `START TRANSACTION`, DDL (`CREATE`/`ALTER`/`DROP`/`RENAME`/`TRUNCATE`, except on temporary
+  tables), `SET autocommit = 1`, `LOCK`/`UNLOCK TABLES` and account statements (`GRANT`, `REVOKE`).
+  While the session has a transaction open, such a statement always gets the confirmation float
+  (whatever `confirm` says; a buffer run lists it in its single up-front prompt), saying it
+  implicitly COMMITs the transaction. Declining runs nothing.
+- **Cancel and timeouts keep the session.** `<C-c>` / `:AbcqlQueryCancel` and `backend.timeout_ms`
+  interrupt only the running statement (`KILL QUERY`); an open transaction stays open, and the error
+  says so.
+- **Foreign-key preview and `gf`.** With a transaction open, the `K` preview of a referenced row
+  runs on the session, so it sees uncommitted rows.
+
+It fails safe. abcql never commits on your behalf: the only COMMIT is one you send or choose.
+
+- Closing the connection by any route makes the server roll the transaction back. This includes
+  Neovim exiting, crashing or being `kill -9`ed (the pipe closes and the backend exits).
+- Before a session with an open transaction goes away, you are asked **Commit / Rollback / Cancel**
+  with **Rollback** as the default: when the buffer is deleted or wiped, before attaching another
+  datasource to the buffer, on `:AbcqlDatasourceReload`, on `:AbcqlSessionClose`, and when quitting
+  Neovim. (Where the action cannot be undone, such as quitting or deleting the buffer, there is no
+  Cancel.)
+- The session never reconnects. If the connection breaks (server `wait_timeout`, `KILL`, network
+  drop, server restart) the error says the session was lost, that the server rolled the open
+  transaction back, and that variables, `autocommit`, temporary tables and `USE` are gone. The
+  statement is not re-run; the next run opens a fresh session.
+- TCP keepalive is on, directly and through the SOCKS proxy.
 
 ### Results Panel
 

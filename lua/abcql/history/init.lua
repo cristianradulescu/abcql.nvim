@@ -271,12 +271,13 @@ function History.rerun(entry, bufnr)
   local Query = require("abcql.db.query")
   local datasource = entry.datasource and Database.connectionRegistry:get_datasource(entry.datasource)
   if datasource then
-    Query.run(entry.query, datasource)
+    Query.run(entry.query, datasource, { bufnr = bufnr or vim.api.nvim_get_current_buf() })
     return
   end
-  Database.ensure_datasource(bufnr or vim.api.nvim_get_current_buf(), function(ds)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  Database.ensure_datasource(bufnr, function(ds)
     if ds then
-      Query.run(entry.query, ds)
+      Query.run(entry.query, ds, { bufnr = bufnr })
     end
   end)
 end

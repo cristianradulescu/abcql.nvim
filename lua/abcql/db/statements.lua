@@ -68,6 +68,45 @@ function M.is_write(sql)
   return not READ_KEYWORDS[keyword]
 end
 
+--- First keywords that make MySQL commit the open transaction before they run (DDL, account
+--- statements, BEGIN/START TRANSACTION, LOCK/UNLOCK TABLES).
+local IMPLICIT_COMMIT = {}
+for _, keyword in ipairs({
+  "BEGIN",
+  "START",
+  "CREATE",
+  "ALTER",
+  "DROP",
+  "RENAME",
+  "TRUNCATE",
+  "LOCK",
+  "UNLOCK",
+  "GRANT",
+  "REVOKE",
+}) do
+  IMPLICIT_COMMIT[keyword] = true
+end
+
+--- The keyword by which a statement implicitly COMMITs an open transaction: its first keyword when
+--- it is one of IMPLICIT_COMMIT (but not CREATE/DROP TEMPORARY TABLE), or `SET autocommit = 1`.
+--- @param sql string
+--- @return string|nil keyword
+function M.implicit_commit(sql)
+  local keyword = M.first_keyword(sql)
+  if not keyword then
+    return nil
+  end
+  local rest = M.strip_leading_comments(sql):lower()
+  if keyword == "SET" then
+    local value = rest:match("^set%s+[@%w_.]*autocommit%s*=%s*(%w+)")
+    return (value == "1" or value == "on" or value == "true") and "SET autocommit = 1" or nil
+  end
+  if (keyword == "CREATE" or keyword == "DROP") and rest:match("^%a+%s+temporary%s") then
+    return nil
+  end
+  return IMPLICIT_COMMIT[keyword] and keyword or nil
+end
+
 --- Whether a statement contains only whitespace and comments.
 --- @param sql string
 --- @return boolean

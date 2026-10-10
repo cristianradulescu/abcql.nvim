@@ -132,6 +132,43 @@ the request's `database`. Schema introspection uses the `pragma_table_info`/`pra
 silently create it), enables `foreign_keys`, and sets a busy timeout. `abcql.config.editor` skips
 the password/keyring and proxy prompts for file DSNs.
 
+### Persistent sessions (opt-in, per buffer, MySQL only)
+
+`query.session = "persistent"` (datasource `session` flag beats it; default `"oneshot"`, which is
+everything described above) keeps one `abcql-backend serve` process per SQL buffer. `serve`
+(`backend/session.go`, `session_mysql.go`) reads the connection `Request` as the first stdin line
+and replies with a `Response` carrying `session` (`{connection_id, database, autocommit,
+in_transaction, rows_modified, rows_locked}`) or `error`; it opens, pins one `*sql.Conn`, reads
+`CONNECTION_ID()` and probes `information_schema.innodb_trx` — error 1227 means no PROCESS
+privilege and the session is refused. Then it reads newline-delimited `{id, op, ...}` requests
+(`exec` with the same `statements` shape as a batch, `cancel`, `close`) and writes one `Response`
+line per request with the same `id`; every exec reply (error ones too) carries a fresh `session`.
+Transaction state comes only from the server, never from parsing SQL (`mysqlSession.State` waits
+out innodb_trx's 100 ms cache first). The serve loop reads stdin while an exec runs: `cancel` and
+`close` are heard, another `exec` gets "session busy". Statements run on a context with no deadline
+(go-sql-driver closes the socket when a context ends): `timeout_ms` is a timer and `cancel` the op,
+both sending `KILL QUERY` from a short-lived side connection, so the connection and an open
+transaction survive (and the error says whether one is open). The session never reconnects: a broken
+connection (or an unreadable state) replies `session_lost` and exits, and EOF on stdin exits too —
+closing the connection is what makes the server roll back; nothing in the code ever COMMITs.
+`runStatements` is shared with the one-shot batch.
+A statement that would implicitly commit the open transaction (`Statements.implicit_commit`: first
+keyword BEGIN/START/DDL/LOCK/GRANT..., `SET autocommit = 1`, not TEMPORARY tables) forces the
+confirmation float like a dangerous one (`Query.implicit_commit`, skipped under `dangerous_confirmed`;
+a buffer run lists it in the same up-front prompt).
+
+Lua side: `abcql.backend.session` wraps one process (line framing in `feed`, id matching, `exec`/
+`exec_sync`/`cancel`/`close`; `Session.start` is the seam specs replace), `abcql.db.session` keeps
+`bufnr -> session` and owns the policy: `mode`/`refusal` (SQLite is refused), `ensure`/`exec`
+(lazy open), the winbar segment, `finish_transaction` and `close`/`close_all`, which ask
+Commit/Rollback/Cancel (`Sessions.confirm`, default Rollback) when `state.in_transaction`. They are
+called on BufDelete/BufWipeout, VimLeavePre (no Cancel), `Database.attach_datasource` to another
+datasource, and `config.reload_datasources`. `Query.run` (when `opts.bufnr` is given) and
+`run_batch` go through `Query.execute_batch`, which picks the session or the one-shot backend after
+every guard (readonly, confirm, dangerous, auto-LIMIT) has run; a refused session is shown as the
+error, never a silent one-shot run. `Follow.preview` uses the session when a transaction is open so
+it sees uncommitted rows.
+
 ### Layered config resolution
 
 Datasources merge from three sources, later wins: `setup()` opts → `~/.config/nvim/abcql/datasources.lua`

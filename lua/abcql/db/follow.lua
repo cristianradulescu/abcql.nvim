@@ -273,9 +273,21 @@ function Follow.preview(datasource, database, sql, results, row_idx, col_idx, wi
   for _, target in ipairs(Follow.targets(cache, datasource.name, database, sql, results.headers, col_idx)) do
     local preview_sql = Follow.build_sql(cache, datasource, target, results.rows[row_idx])
     if preview_sql then
-      require("abcql.db.query").execute_async(datasource.adapter, preview_sql, function(result, err)
+      local Query = require("abcql.db.query")
+      local function show(result, err)
         callback(Follow.preview_lines(target, result, err, width))
-      end, { max_rows = 1 })
+      end
+      -- With a transaction open the preview must see its uncommitted rows, which only the
+      -- session's connection can.
+      local bufnr = require("abcql.ui").get_editor_buf()
+      if bufnr and require("abcql.db.session").in_transaction(bufnr, datasource) then
+        local request = datasource.adapter:build_backend_request(preview_sql, { max_rows = 1 })
+        Query.execute_batch(bufnr, datasource, request, { { sql = preview_sql, max_rows = 1 } }, function(rows, err)
+          show(rows and rows[1], err)
+        end)
+      else
+        Query.execute_async(datasource.adapter, preview_sql, show, { max_rows = 1 })
+      end
     end
   end
 end
@@ -314,7 +326,11 @@ function Follow.follow(datasource, database, sql, results, row_idx, col_idx)
       return
     end
     -- A generated single-row SELECT, like the code action's browse
-    require("abcql.db.query").run(follow_sql, datasource, { confirm = false })
+    require("abcql.db.query").run(
+      follow_sql,
+      datasource,
+      { confirm = false, bufnr = require("abcql.ui").get_editor_buf() }
+    )
   end
 
   if #targets == 1 then

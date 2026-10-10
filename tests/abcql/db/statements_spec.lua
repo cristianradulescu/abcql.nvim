@@ -216,4 +216,36 @@ describe("Statements", function()
       assert.is_nil(Statements.dangerous(""))
     end)
   end)
+
+  describe("implicit_commit", function()
+    it("names the keyword that commits the open transaction", function()
+      for sql, want in pairs({
+        ["BEGIN"] = "BEGIN",
+        ["-- c\nstart transaction"] = "START",
+        ["drop table t"] = "DROP",
+        ["ALTER TABLE t ADD c int"] = "ALTER",
+        ["truncate t"] = "TRUNCATE",
+        ["LOCK TABLES t WRITE"] = "LOCK",
+        ["grant select on *.* to u"] = "GRANT",
+        ["SET autocommit = 1"] = "SET autocommit = 1",
+        ["set @@session.autocommit=ON"] = "SET autocommit = 1",
+      }) do
+        assert.are.equal(want, Statements.implicit_commit(sql), sql)
+      end
+    end)
+
+    it("ignores everything else", function()
+      for _, sql in ipairs({
+        "SELECT 1",
+        "UPDATE t SET a = 1",
+        "CREATE TEMPORARY TABLE t (a int)",
+        "DROP TEMPORARY TABLE t",
+        "SET autocommit = 0",
+        "SET @a = 1",
+        "COMMIT",
+      }) do
+        assert.is_nil(Statements.implicit_commit(sql), sql)
+      end
+    end)
+  end)
 end)

@@ -72,6 +72,26 @@ end, {
   desc = "Cancel the running abcql query",
 })
 
+--- Commit / roll back the transaction open in the buffer's persistent session
+vim.api.nvim_create_user_command("AbcqlTransactionCommit", function()
+  require("abcql.db.session").finish_transaction(vim.api.nvim_get_current_buf(), "COMMIT")
+end, {
+  desc = "COMMIT the transaction of this buffer's persistent session",
+})
+
+vim.api.nvim_create_user_command("AbcqlTransactionRollback", function()
+  require("abcql.db.session").finish_transaction(vim.api.nvim_get_current_buf(), "ROLLBACK")
+end, {
+  desc = "ROLLBACK the transaction of this buffer's persistent session",
+})
+
+--- Close the buffer's persistent session (asks first when a transaction is open)
+vim.api.nvim_create_user_command("AbcqlSessionClose", function()
+  require("abcql.db.session").close(vim.api.nvim_get_current_buf(), { can_cancel = true })
+end, {
+  desc = "Close this buffer's persistent session",
+})
+
 --- Attach a datasource to the current buffer (prompts when no name is given)
 vim.api.nvim_create_user_command("AbcqlDatasourceAttach", function(opts)
   local name = opts.args ~= "" and opts.args or nil

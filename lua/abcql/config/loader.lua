@@ -17,6 +17,7 @@ local M = {}
 --- @field highlight? string Highlight group used for this datasource in the winbar
 --- @field auto_limit? number|false LIMIT added to plain SELECTs (overrides query.auto_limit; 0/false disables)
 --- @field lint_dangerous? boolean Override query.lint_dangerous for this datasource
+--- @field session? "persistent"|"oneshot" Override query.session for this datasource
 --- @field source abcql.DatasourceSource Where this datasource was loaded from
 --- @field source_path? string Path to the config file (nil for "config" source)
 
@@ -70,6 +71,7 @@ M.CONFIG_TEMPLATE = [[
 --     highlight = "DiagnosticError", -- winbar highlight group
 --     auto_limit = 100,            -- LIMIT added to SELECTs without one (false = off)
 --     lint_dangerous = false,      -- skip the UPDATE/DELETE-without-WHERE lint
+--     session = "persistent",      -- keep one connection per buffer (MySQL only); "oneshot" = one per run
 --   },
 
 return {
@@ -176,6 +178,7 @@ local function normalize_datasource(value, source, source_path)
     entry.highlight = value.highlight
     entry.auto_limit = value.auto_limit
     entry.lint_dangerous = value.lint_dangerous
+    entry.session = value.session
   else
     entry.dsn = M.expand_env_vars(value)
   end
@@ -249,7 +252,7 @@ end
 
 --- Get datasource configs with DSN, optional proxy/secret and safety flags
 --- @param loaded_datasources table<string, abcql.LoadedDatasource>
---- @return table<string, { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean }> name -> config mapping
+--- @return table<string, { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot" }> name -> config mapping
 function M.get_datasource_configs(loaded_datasources)
   local result = {}
   for name, data in pairs(loaded_datasources) do
@@ -262,6 +265,7 @@ function M.get_datasource_configs(loaded_datasources)
       highlight = data.highlight,
       auto_limit = data.auto_limit,
       lint_dangerous = data.lint_dangerous,
+      session = data.session,
     }
   end
   return result
@@ -348,7 +352,7 @@ end
 --- Replace a datasource entry in a config file with a freshly rendered one.
 --- @param path string
 --- @param name string
---- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean }
+--- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot" }
 --- @return boolean success
 --- @return string|nil error
 function M.update_datasource_in_file(path, name, entry)
@@ -398,7 +402,7 @@ end
 
 --- Render a datasource entry as Lua source for a config file
 --- @param name string
---- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean }
+--- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot" }
 --- @return string
 function M.format_datasource_entry(name, entry)
   local key = name:match("^[%a_][%w_]*$") and name or string.format("[%q]", name)
@@ -408,6 +412,7 @@ function M.format_datasource_entry(name, entry)
   local confirm = type(entry.confirm) == "string" and entry.confirm or nil
   local highlight = type(entry.highlight) == "string" and entry.highlight or nil
   local lint_dangerous = type(entry.lint_dangerous) == "boolean"
+  local session = (entry.session == "persistent" or entry.session == "oneshot") and entry.session or nil
   local auto_limit = entry.auto_limit
   if type(auto_limit) ~= "number" and auto_limit ~= false then
     auto_limit = nil
@@ -418,6 +423,7 @@ function M.format_datasource_entry(name, entry)
     or confirm
     or highlight
     or lint_dangerous
+    or session
     or auto_limit ~= nil
   if not has_flags then
     return string.format("    %s = %q,", key, entry.dsn)
@@ -445,6 +451,9 @@ function M.format_datasource_entry(name, entry)
   if lint_dangerous then
     table.insert(lines, string.format("      lint_dangerous = %s,", tostring(entry.lint_dangerous)))
   end
+  if session then
+    table.insert(lines, string.format("      session = %q,", session))
+  end
   if auto_limit ~= nil then
     table.insert(lines, string.format("      auto_limit = %s,", tostring(auto_limit)))
   end
@@ -457,7 +466,7 @@ end
 --- `datasources = {` line so comments and other entries are preserved.
 --- @param path string Config file path
 --- @param name string Datasource name
---- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean }
+--- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot" }
 --- @return boolean success
 --- @return string|nil error
 function M.add_datasource_to_file(path, name, entry)

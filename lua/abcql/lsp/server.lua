@@ -687,7 +687,7 @@ function Server:handle_code_action(params)
       command = {
         title = "Browse table",
         command = "abcql.browse",
-        arguments = { { sql = "SELECT * FROM " .. qualified .. " LIMIT 1000" } },
+        arguments = { { sql = "SELECT * FROM " .. qualified .. " LIMIT 1000", uri = vim.uri_from_bufnr(bufnr) } },
       },
     })
 

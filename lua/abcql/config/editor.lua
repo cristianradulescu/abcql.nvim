@@ -265,6 +265,7 @@ function M.read_entry(path, name)
     highlight = raw.highlight,
     auto_limit = raw.auto_limit,
     lint_dangerous = raw.lint_dangerous,
+    session = raw.session,
   },
     nil
 end

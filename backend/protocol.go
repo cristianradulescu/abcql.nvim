@@ -98,4 +98,10 @@ type Response struct {
 	// index (Error then holds its message and later statements were not run).
 	Results     []*Response `json:"results,omitempty"`
 	FailedIndex *int        `json:"failed_index,omitempty"`
+	// ID, Session and SessionLost are only set by "serve" (see session.go):
+	// the request a reply answers, the connection's state after it, and
+	// whether the connection was lost (the process exits right after).
+	ID          int           `json:"id,omitempty"`
+	Session     *SessionState `json:"session,omitempty"`
+	SessionLost bool          `json:"session_lost,omitempty"`
 }

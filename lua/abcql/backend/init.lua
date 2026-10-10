@@ -28,6 +28,17 @@ local function missing_binary_error(path)
   return "abcql-backend binary not found. " .. suffix
 end
 
+--- Path of the backend binary, or the error explaining that it is missing.
+--- @return string|nil path
+--- @return string|nil err
+function M.executable_path()
+  local path = M.get_path()
+  if not path or vim.fn.executable(path) ~= 1 then
+    return nil, missing_binary_error(path)
+  end
+  return path, nil
+end
+
 --- Parse a vim.system() completion result into (response, err).
 --- @param result vim.SystemCompleted
 --- @return table|nil response
@@ -69,9 +80,9 @@ end
 --- @param callback fun(response: table|nil, err: string|nil)
 --- @return vim.SystemObj|nil handle
 function M.invoke(request, callback)
-  local path = M.get_path()
-  if not path or vim.fn.executable(path) ~= 1 then
-    callback(nil, missing_binary_error(path))
+  local path, path_err = M.executable_path()
+  if not path then
+    callback(nil, path_err)
     return nil
   end
 
@@ -101,9 +112,9 @@ end
 --- @return table|nil response
 --- @return string|nil err
 function M.invoke_sync(request)
-  local path = M.get_path()
-  if not path or vim.fn.executable(path) ~= 1 then
-    return nil, missing_binary_error(path)
+  local path, path_err = M.executable_path()
+  if not path then
+    return nil, path_err
   end
 
   local ok, body = pcall(vim.json.encode, request)

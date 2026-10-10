@@ -9,6 +9,9 @@
 //
 // A request with a "statements" array of {"sql", "max_rows"} runs them in
 // order on one connection and answers with a "results" array.
+//
+// "abcql-backend serve" keeps one connection open for a whole session; see
+// session.go.
 package main
 
 import (
@@ -23,7 +26,7 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: abcql-backend <exec|version>")
+		fmt.Fprintln(os.Stderr, "usage: abcql-backend <exec|serve|version>")
 		os.Exit(2)
 	}
 
@@ -32,6 +35,8 @@ func main() {
 		fmt.Println("abcql-backend " + version)
 	case "exec":
 		os.Exit(runExec(os.Stdin, os.Stdout))
+	case "serve":
+		os.Exit(runServe(os.Stdin, os.Stdout, openSession))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
 		os.Exit(2)

@@ -15,6 +15,7 @@ local loader = require("abcql.config.loader")
 ---@field auto_attach boolean Attach the last used datasource to new SQL buffers automatically
 ---@field treesitter boolean Use the tree-sitter `sql` parser for statement boundaries when available
 ---@field lint_dangerous boolean Warn about and always confirm UPDATE/DELETE without WHERE and TRUNCATE
+---@field session "oneshot"|"persistent" "persistent" keeps one connection per SQL buffer open across runs (MySQL only); "oneshot" connects per run
 
 ---@class abcql.Config
 ---@field datasources table<string, string|table>
@@ -55,6 +56,7 @@ local defaults = {
     auto_attach = true,
     treesitter = true,
     lint_dangerous = true,
+    session = "oneshot",
   },
 }
 
@@ -92,6 +94,11 @@ end
 --- Reload datasources from config files
 --- Useful when cwd changes or config files are modified
 function M.reload_datasources()
+  -- Open sessions belong to the datasources being replaced.
+  if not require("abcql.db.session").close_all({ can_cancel = true }) then
+    vim.notify("abcql: reload cancelled", vim.log.levels.WARN)
+    return
+  end
   apply_datasources(config.default)
 
   local ok, Tree = pcall(require, "abcql.ui.tree")

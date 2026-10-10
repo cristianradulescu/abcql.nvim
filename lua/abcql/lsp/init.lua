@@ -42,13 +42,14 @@ local function build_commands(datasource)
       local statements = require("abcql.db.query").get_statements(bufnr)
       local stmt = require("abcql.db.statements").at_line(statements, arg.line)
       if stmt then
-        require("abcql.db.query").run(stmt.text, datasource)
+        require("abcql.db.query").run(stmt.text, datasource, { bufnr = bufnr })
       end
     end,
     ["abcql.browse"] = function(command)
       local arg = command.arguments and command.arguments[1] or {}
+      local ok, bufnr = pcall(vim.uri_to_bufnr, arg.uri or "")
       if arg.sql then
-        require("abcql.db.query").run(arg.sql, datasource, { confirm = false })
+        require("abcql.db.query").run(arg.sql, datasource, { confirm = false, bufnr = ok and bufnr or nil })
       end
     end,
   }

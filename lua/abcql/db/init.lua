@@ -45,6 +45,7 @@ function Database.setup(config)
           highlight = ds_config.highlight,
           auto_limit = ds_config.auto_limit,
           lint_dangerous = ds_config.lint_dangerous,
+          session = ds_config.session,
         }
       or nil
     local _, err = Database.connectionRegistry:register_datasource(name, dsn, proxy, secret, opts)
@@ -75,8 +76,9 @@ end
 
 --- Build the winbar text for a buffer's datasource
 --- @param datasource Datasource|nil
+--- @param session_state table|nil State of the buffer's persistent session (see abcql.db.session)
 --- @return string
-function Database.winbar_text(datasource)
+function Database.winbar_text(datasource, session_state)
   if not datasource then
     return "%#AbcqlWinbarLabel# abcql %* no datasource"
   end
@@ -90,17 +92,23 @@ function Database.winbar_text(datasource)
   if datasource.readonly then
     text = text .. " %#AbcqlReadonly#[readonly]%*"
   end
-  return text
+  return text .. require("abcql.db.session").winbar_text(session_state, db)
 end
 
 --- Apply the datasource winbar to every window showing the buffer
 --- @param bufnr number
 local function apply_winbar(bufnr)
   local datasource = Database.buffer_datasources[bufnr]
-  local text = Database.winbar_text(datasource)
+  local text = Database.winbar_text(datasource, require("abcql.db.session").state(bufnr))
   for _, win in ipairs(vim.fn.win_findbuf(bufnr)) do
     vim.wo[win].winbar = text
   end
+end
+
+--- Re-apply the winbar of a buffer (its session state changed)
+--- @param bufnr number
+function Database.refresh_winbar(bufnr)
+  apply_winbar(bufnr)
 end
 
 --- Detect a `-- abcql: <name>` (or `-- abcql: datasource=<name>`) comment in
@@ -134,6 +142,17 @@ function Database.attach_datasource(bufnr, datasource_name, callback)
       callback(nil, err)
     end
     return
+  end
+
+  -- Another datasource can't reuse this buffer's session; an open transaction is asked about.
+  local current = Database.buffer_datasources[bufnr]
+  if current and current.name ~= datasource_name then
+    if not require("abcql.db.session").close(bufnr, { can_cancel = true }) then
+      if callback then
+        callback(nil, "cancelled")
+      end
+      return
+    end
   end
 
   Database.buffer_datasources[bufnr] = datasource

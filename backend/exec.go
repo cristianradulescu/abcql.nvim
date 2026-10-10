@@ -63,7 +63,12 @@ func runSQL(db *sql.DB, req *Request, kindFor func(*sql.ColumnType) columnKind) 
 func runStatement(conn execer, query string, maxRows int, timeout time.Duration, kindFor func(*sql.ColumnType) columnKind) (*Response, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	return runStatementCtx(ctx, conn, query, maxRows, kindFor)
+}
 
+// runStatementCtx runs one statement under ctx and times the round trip. A
+// persistent session passes a context without a deadline (see session.go).
+func runStatementCtx(ctx context.Context, conn execer, query string, maxRows int, kindFor func(*sql.ColumnType) columnKind) (*Response, error) {
 	start := time.Now()
 
 	var resp *Response
@@ -81,14 +86,33 @@ func runStatement(conn execer, query string, maxRows int, timeout time.Duration,
 	return resp, nil
 }
 
-// runBatch runs the request's statements in order on a single connection
-// (not the pool), each with its own timeout, stopping at the first error.
-// Nothing is ever committed on the user's behalf: when the connection closes
-// the server rolls back whatever transaction a script left open.
+// runStatements runs the statements in order through run, stopping at the
+// first error. Nothing is ever committed on the user's behalf: when the
+// connection closes the server rolls back whatever transaction a script left
+// open.
 //
 // A failing statement is reported inside the Response (its error, index and
 // the results before it), not as an error, so the caller still gets the
 // results of the statements that did run.
+func runStatements(stmts []Statement, run func(Statement) (*Response, error)) *Response {
+	start := time.Now()
+	resp := &Response{Results: make([]*Response, 0, len(stmts))}
+	for i, stmt := range stmts {
+		result, err := run(stmt)
+		if err != nil {
+			resp.Error = err.Error()
+			resp.FailedIndex = &i
+			break
+		}
+		resp.Results = append(resp.Results, result)
+	}
+
+	resp.DurationMs = float64(time.Since(start)) / float64(time.Millisecond)
+	return resp
+}
+
+// runBatch runs the request's statements in order on a single connection
+// (not the pool), each with its own timeout, stopping at the first error.
 func runBatch(db *sql.DB, req *Request, kindFor func(*sql.ColumnType) columnKind) (*Response, error) {
 	timeout := requestTimeout(req)
 
@@ -100,20 +124,9 @@ func runBatch(db *sql.DB, req *Request, kindFor func(*sql.ColumnType) columnKind
 	}
 	defer conn.Close()
 
-	start := time.Now()
-	resp := &Response{Results: make([]*Response, 0, len(req.Statements))}
-	for i, stmt := range req.Statements {
-		result, err := runStatement(conn, stmt.SQL, int(stmt.MaxRows), timeout, kindFor)
-		if err != nil {
-			resp.Error = err.Error()
-			resp.FailedIndex = &i
-			break
-		}
-		resp.Results = append(resp.Results, result)
-	}
-
-	resp.DurationMs = float64(time.Since(start)) / float64(time.Millisecond)
-	return resp, nil
+	return runStatements(req.Statements, func(stmt Statement) (*Response, error) {
+		return runStatement(conn, stmt.SQL, int(stmt.MaxRows), timeout, kindFor)
+	}), nil
 }
 
 func execWrite(ctx context.Context, db execer, query string) (*Response, error) {

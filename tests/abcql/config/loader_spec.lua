@@ -485,6 +485,13 @@ describe("Config Loader add_datasource_to_file", function()
       assert.are.equal('    dev = "mysql://u@h/db",', text)
     end)
 
+    it("keeps a valid session flag and drops an invalid one", function()
+      local good = Loader.format_datasource_entry("dev", { dsn = "mysql://u@h/db", session = "persistent" })
+      assert.are.equal("persistent", assert(loadstring("return {" .. good .. "}"))().dev.session)
+      local bad = Loader.format_datasource_entry("dev", { dsn = "mysql://u@h/db", session = "yes" })
+      assert.are.equal('    dev = "mysql://u@h/db",', bad)
+    end)
+
     it("writes booleans bare and strings quoted", function()
       local text = Loader.format_datasource_entry("dev", {
         dsn = "mysql://u@h/db",

@@ -73,6 +73,7 @@ function M.setup()
   vim.api.nvim_set_hl(0, "AbcqlTabInactive", { link = "Comment", default = true })
   vim.api.nvim_set_hl(0, "AbcqlDatasource", { link = "Function", default = true })
   vim.api.nvim_set_hl(0, "AbcqlReadonly", { link = "DiagnosticWarn", default = true })
+  vim.api.nvim_set_hl(0, "AbcqlTransaction", { link = "ErrorMsg", default = true })
   vim.api.nvim_set_hl(0, "AbcqlRunning", { link = "DiagnosticInfo", default = true })
   vim.api.nvim_set_hl(0, "AbcqlTruncated", { link = "DiagnosticWarn", default = true })
 

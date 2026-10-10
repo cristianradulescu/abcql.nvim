@@ -1,5 +1,6 @@
 local Backend = require("abcql.backend")
 local Limit = require("abcql.db.limit")
+local Sessions = require("abcql.db.session")
 local Statements = require("abcql.db.statements")
 local Status = require("abcql.ui.status")
 
@@ -66,6 +67,25 @@ function Query.execute_sync(adapter, query, opts)
   return to_query_result(response), nil
 end
 
+--- Map a batch response (or error) from the backend or a session onto `execute_batch_async`'s callback.
+--- @param callback fun(results: QueryResult[]|nil, err: string|nil, failed_index: number|nil)
+--- @return fun(response: table|nil, err: string|nil)
+local function batch_handler(callback)
+  return function(response, err)
+    if not response then
+      callback(nil, err, nil)
+      return
+    end
+
+    local results = {}
+    for _, result in ipairs(response.results or {}) do
+      table.insert(results, to_query_result(result))
+    end
+    local failed = response.failed_index and response.failed_index + 1 or nil
+    callback(results, type(response.error) == "string" and response.error ~= "" and response.error or nil, failed)
+  end
+end
+
 --- Execute several statements in one backend request: they run in order on a
 --- single connection, so a transaction, `SET @var` or temporary table carries
 --- over from one to the next. Stops at the first error.
@@ -79,19 +99,24 @@ function Query.execute_batch_async(request, statements, callback)
   request.max_rows = nil
   request.statements = statements
 
-  return Backend.invoke(request, function(response, err)
-    if not response then
-      callback(nil, err, nil)
-      return
-    end
+  return Backend.invoke(request, batch_handler(callback))
+end
 
-    local results = {}
-    for _, result in ipairs(response.results or {}) do
-      table.insert(results, to_query_result(result))
-    end
-    local failed = response.failed_index and response.failed_index + 1 or nil
-    callback(results, response.error ~= "" and response.error or nil, failed)
-  end)
+--- Like `execute_batch_async`, but through the buffer's persistent session when its datasource
+--- is in persistent mode (opened on first use), so the statements share the session's connection
+--- across runs. A refused session (SQLite, no PROCESS privilege, ...) is an error, never a
+--- fallback to a one-shot run.
+--- @param bufnr number Buffer whose session runs them
+--- @param datasource Datasource
+--- @param request table Backend request built by the adapter
+--- @param statements { sql: string, max_rows: number }[]
+--- @param callback fun(results: QueryResult[]|nil, err: string|nil, failed_index: number|nil)
+--- @return table|nil handle Has `kill`
+function Query.execute_batch(bufnr, datasource, request, statements, callback)
+  if Sessions.mode(datasource) == "persistent" then
+    return Sessions.exec(bufnr, datasource, request, statements, batch_handler(callback))
+  end
+  return Query.execute_batch_async(request, statements, callback)
 end
 
 --- Split a buffer into statements, honouring the `query.treesitter` setting.
@@ -188,6 +213,27 @@ function Query.find_dangerous(sql)
     end
   end
   return nil
+end
+
+--- Why running these statements would silently COMMIT the buffer's open transaction (persistent
+--- sessions), or nil. Uses the transaction state the server last reported.
+--- @param bufnr number|nil
+--- @param datasource Datasource
+--- @param sql string One statement
+--- @return string|nil reason
+function Query.implicit_commit(bufnr, datasource, sql)
+  if not bufnr or not Sessions.in_transaction(bufnr, datasource) then
+    return nil
+  end
+  local keyword = Statements.implicit_commit(sql)
+  if not keyword then
+    return nil
+  end
+  return string.format(
+    "%s implicitly COMMITs the open transaction (%d rows modified)",
+    keyword,
+    Sessions.state(bufnr).rows_modified or 0
+  )
 end
 
 --- Show a statement preview in a floating window and prompt for execution
@@ -287,8 +333,10 @@ end
 --- A dangerous statement (UPDATE/DELETE without WHERE, TRUNCATE) is always
 --- confirmed, even with `opts.confirm = false`, unless the lint is disabled.
 --- `opts.dangerous_confirmed` means the caller already confirmed it (a buffer run's upfront prompt).
+--- A statement that would implicitly COMMIT the session's open transaction is confirmed the same way.
 --- `opts.mark` (`abcql.ui.StatusMark`) is the statement's line range, coloured by outcome.
---- @param opts? { confirm?: boolean, dangerous_confirmed?: boolean, mark?: abcql.ui.StatusMark, on_done?: fun(results: QueryResult|nil, err: string|nil) }
+--- `opts.bufnr` is the buffer whose persistent session runs it (ignored for one-shot datasources).
+--- @param opts? { bufnr?: number, confirm?: boolean, dangerous_confirmed?: boolean, mark?: abcql.ui.StatusMark, on_done?: fun(results: QueryResult|nil, err: string|nil) }
 function Query.run(sql, datasource, opts)
   opts = opts or {}
   local UI = require("abcql.ui")
@@ -312,11 +360,21 @@ function Query.run(sql, datasource, opts)
     return
   end
 
-  if datasource.readonly and Statements.is_write(sql) then
-    local err = string.format("Datasource '%s' is readonly; refusing to run a write statement.", datasource.name)
+  local function refuse(err)
     Status.done(opts.mark, err)
     UI.display(err, nil, { query = sql, datasource = datasource })
     finish(nil, err)
+  end
+
+  local persistent = opts.bufnr ~= nil and Sessions.mode(datasource) == "persistent"
+  local refusal = persistent and Sessions.refusal(datasource)
+  if refusal then
+    refuse(refusal)
+    return
+  end
+
+  if datasource.readonly and Statements.is_write(sql) then
+    refuse(string.format("Datasource '%s' is readonly; refusing to run a write statement.", datasource.name))
     return
   end
 
@@ -333,7 +391,7 @@ function Query.run(sql, datasource, opts)
     local sent_sql, limit_status = Limit.apply(sql, limit)
     local exec_opts = limit_status and { max_rows = 0 } or nil
 
-    local handle = Query.execute_async(datasource.adapter, sent_sql, function(results, err)
+    local function on_result(results, err)
       if running == job then
         running = nil
       end
@@ -353,7 +411,23 @@ function Query.run(sql, datasource, opts)
         Query.after_schema_change(sql, datasource)
       end
       finish(results, err)
-    end, exec_opts)
+    end
+
+    local handle
+    if persistent then
+      local request = datasource.adapter:build_backend_request(sent_sql, exec_opts)
+      handle = Query.execute_batch(
+        opts.bufnr,
+        datasource,
+        request,
+        { { sql = sent_sql, max_rows = request.max_rows } },
+        function(results, err)
+          on_result(results and results[1], err)
+        end
+      )
+    else
+      handle = Query.execute_async(datasource.adapter, sent_sql, on_result, exec_opts)
+    end
 
     -- The callback may already have run (e.g. backend binary missing), in
     -- which case the job is finished and there is nothing to track.
@@ -365,15 +439,26 @@ function Query.run(sql, datasource, opts)
   -- A statement touching every row is confirmed whatever the policy says.
   local danger = not opts.dangerous_confirmed and Query.lint_dangerous_enabled(datasource) and Query.find_dangerous(sql)
     or nil
+  local commit = not opts.dangerous_confirmed and Query.implicit_commit(opts.bufnr, datasource, sql) or nil
   local needs_confirm = opts.confirm
   if needs_confirm == nil then
     needs_confirm = Query.should_confirm(datasource, sql)
   end
 
-  if needs_confirm or danger then
+  if needs_confirm or danger or commit then
     local title
-    if danger then
-      title = string.format("%s — run on %s?", danger.message, datasource.name)
+    if danger or commit then
+      local reasons = { danger and danger.message, commit }
+      title = string.format(
+        "%s — run on %s?",
+        table.concat(
+          vim.tbl_filter(function(r)
+            return r
+          end, reasons),
+          "; "
+        ),
+        datasource.name
+      )
     else
       local kind = Statements.is_write(sql) and "Run write statement" or "Run query"
       title = string.format("%s on %s?", kind, datasource.name)
@@ -428,7 +513,7 @@ local function run_in_current_buffer(sql, opts, mark)
     if not datasource then
       return
     end
-    Query.run(sql, datasource, vim.tbl_extend("force", { mark = mark }, opts or {}))
+    Query.run(sql, datasource, vim.tbl_extend("force", { mark = mark, bufnr = bufnr }, opts or {}))
   end)
 end
 
@@ -490,7 +575,7 @@ local function run_batch(bufnr, datasource, statements)
   UI.set_running(sent_batch, datasource)
   Status.running(whole)
 
-  local handle = Query.execute_batch_async(request, to_send, function(results, err, failed)
+  local handle = Query.execute_batch(bufnr, datasource, request, to_send, function(results, err, failed)
     if running == job then
       running = nil
     end
@@ -573,6 +658,12 @@ local function run_statements(bufnr, statements)
       end
     end
 
+    local refusal = Sessions.mode(datasource) == "persistent" and Sessions.refusal(datasource)
+    if refusal then
+      require("abcql.ui").display(refusal, nil, { datasource = datasource })
+      return
+    end
+
     if datasource.readonly and writes > 0 then
       require("abcql.ui").display(
         string.format(
@@ -598,6 +689,14 @@ local function run_statements(bufnr, statements)
       end
     end
 
+    local commits = {}
+    for _, stmt in ipairs(statements) do
+      local reason = Query.implicit_commit(bufnr, datasource, stmt.text)
+      if reason then
+        table.insert(commits, string.format("-- line %d: %s", stmt.start_line, reason))
+      end
+    end
+
     local function run_all()
       run_batch(bufnr, datasource, statements)
     end
@@ -608,10 +707,17 @@ local function run_statements(bufnr, statements)
     end
     local needs_confirm = writes > 0 and Query.should_confirm(datasource, "update")
       or Query.should_confirm(datasource, "select")
-    if #dangers > 0 then
+    if #dangers > 0 or #commits > 0 then
+      local flags = {}
+      if #dangers > 0 then
+        table.insert(flags, string.format("%d dangerous statement(s)", #dangers))
+      end
+      if #commits > 0 then
+        table.insert(flags, string.format("%d implicit COMMIT(s)", #commits))
+      end
       show_confirmation_prompt(
-        table.concat(dangers, "\n") .. "\n\n" .. table.concat(preview, ";\n") .. ";",
-        string.format("Run %d statement(s) on %s? %d dangerous statement(s)", #statements, datasource.name, #dangers),
+        table.concat(vim.list_extend(dangers, commits), "\n") .. "\n\n" .. table.concat(preview, ";\n") .. ";",
+        string.format("Run %d statement(s) on %s? %s", #statements, datasource.name, table.concat(flags, ", ")),
         run_all
       )
     elseif needs_confirm then

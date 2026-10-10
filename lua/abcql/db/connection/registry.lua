@@ -4,8 +4,9 @@
 ---@field highlight? string Highlight group for the winbar label
 ---@field auto_limit? number|false LIMIT added to plain SELECTs (overrides query.auto_limit; 0/false disables)
 ---@field lint_dangerous? boolean Per-datasource override of query.lint_dangerous
+---@field session? "persistent"|"oneshot" Per-datasource override of query.session
 
----@alias Datasource { name: string, dsn: string, adapter?: abcql.db.adapter.Adapter, readonly: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean }
+---@alias Datasource { name: string, dsn: string, adapter?: abcql.db.adapter.Adapter, readonly: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot" }
 
 ---@class abcql.db.connection.Registry
 ---@field private adapters table<string, abcql.db.adapter.Adapter> Registered adapter classes by scheme
@@ -105,6 +106,7 @@ function Registry:register_datasource(name, dsn, proxy, secret, opts)
     highlight = opts.highlight,
     auto_limit = opts.auto_limit,
     lint_dangerous = opts.lint_dangerous,
+    session = opts.session,
   }
 
   self.datasources = vim.tbl_extend("force", self.datasources, { [name] = datasource })
