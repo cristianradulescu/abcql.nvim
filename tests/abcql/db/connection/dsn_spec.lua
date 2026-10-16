@@ -34,12 +34,17 @@ describe("dsn_handler", function()
       assert.is_nil(parsed.port)
     end)
 
-    it("should parse DSN without database", function()
-      local dsn = "mysql://user:password@localhost:3306"
-      local parsed, err = dsn_handler.parse_dsn(dsn)
+    it("should reject a DSN without database", function()
+      for _, dsn in ipairs({
+        "mysql://user:password@localhost:3306",
+        "mysql://user:password@localhost:3306/",
+        "mysql://user:password@localhost:3306/?charset=utf8",
+      }) do
+        local parsed, err = dsn_handler.parse_dsn(dsn)
 
-      assert.is_nil(err)
-      assert.is_nil(parsed.database)
+        assert.is_nil(parsed)
+        assert.matches("Missing database name", err)
+      end
     end)
 
     it("should parse DSN with query string options", function()

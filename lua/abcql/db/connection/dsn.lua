@@ -94,13 +94,17 @@ function M.parse_dsn(dsn)
     end
   end
 
+  if not database or database == "" then
+    return nil, "Missing database name in DSN (expected " .. scheme .. "://user:password@host:port/database)"
+  end
+
   local parsed = {
     scheme = scheme:lower(),
     user = user,
     password = password,
     host = host,
     port = port and tonumber(port) or nil,
-    database = (database and database ~= "") and database or nil,
+    database = database,
     options = parse_options(options),
   }
 
