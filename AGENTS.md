@@ -9,7 +9,8 @@ binary in `backend/` (its own Go module) — no database client library or CLI d
 All commands are in the `Makefile`:
 
 ```sh
-make build       # go build backend/ -> bin/abcql-backend (gitignored; required before executing queries)
+make build       # go build backend/ -> bin/abcql-backend (gitignored; required before executing queries), stamped with the version
+make version     # print the release version (lua/abcql/version.lua)
 make lint        # lint-backend (gofmt -l + go vet on backend/) + luacheck lua/ tests/
 make format      # stylua --check . (check only, does NOT fix; Lua only, doesn't touch backend/)
 make format-fix  # stylua . (fix in place)
@@ -101,6 +102,16 @@ dials SOCKS5 proxies itself (`golang.org/x/net/proxy`).
 - Lua: no snapshot tests, no fixture files
 - Lua: test tree mirrors source tree: `tests/abcql/` mirrors `lua/abcql/`
 - Go: plain `*_test.go` files next to the code under test in `backend/`, run via `go test ./...`; no mocking library
+
+## Versioning and Changelog
+
+- SemVer; one version for the plugin and `abcql-backend`, in `lua/abcql/version.lua` (single
+  `return "X.Y.Z"` line, read by the Makefile). `:checkhealth abcql` warns when the built backend
+  reports a different version. Public interface: "Versioning" in `README.md`.
+- Every user-visible change adds a line under `## [Unreleased]` in `CHANGELOG.md` (Keep a Changelog
+  sections) in the same commit. Refactors, docs-only and test-only changes don't.
+- Release steps (move Unreleased to a dated version, bump `version.lua`, tag `vX.Y.Z`): see
+  "Versioning and releases" in `CLAUDE.md`.
 
 ## No CI
 

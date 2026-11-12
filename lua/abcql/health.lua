@@ -7,7 +7,9 @@ local function is_linux()
   return uname and uname.sysname == "Linux"
 end
 
-local function check_backend_binary()
+--- Checks that abcql-backend runs and was built from the same release as the Lua side (both are
+--- versioned by lua/abcql/version.lua; `make build` stamps it into the binary).
+function M.check_backend_binary()
   local ok_backend, Backend = pcall(require, "abcql.backend")
   if not ok_backend then
     health.error("Failed to load abcql.backend: " .. tostring(Backend))
@@ -24,19 +26,33 @@ local function check_backend_binary()
   end
 
   local result = vim.system({ path, "version" }, { text = true }):wait()
-  if result.code == 0 then
-    health.ok("abcql-backend is available (" .. vim.trim(result.stdout or "") .. ")")
-  else
+  if result.code ~= 0 then
     health.error("abcql-backend at " .. path .. " did not run successfully", {
       tostring(result.stderr),
     })
+    return
+  end
+
+  local plugin_version = require("abcql.version")
+  local output = vim.trim(result.stdout or "")
+  local backend_version = output:match("^abcql%-backend%s+(%S+)$") or output
+  if backend_version == plugin_version then
+    health.ok(string.format("abcql-backend %s is available and matches abcql.nvim %s", backend_version, plugin_version))
+  else
+    health.warn(
+      string.format("abcql-backend version (%s) does not match abcql.nvim (%s)", backend_version, plugin_version),
+      {
+        "Rebuild it with `make build` in the abcql.nvim plugin directory: the Lua side and the backend share a protocol and must come from the same release.",
+        "A binary built with plain `go build` reports `dev`.",
+      }
+    )
   end
 end
 
 local function check_core_dependencies()
   health.start("Core dependencies")
 
-  check_backend_binary()
+  M.check_backend_binary()
 
   if vim.fn.executable("jq") == 1 then
     health.ok("jq is available (JSON export enabled)")

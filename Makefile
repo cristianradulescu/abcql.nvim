@@ -1,4 +1,7 @@
-.PHONY: lint lint-backend format format-fix check test test-backend build test-db-up test-db-down test-db-logs
+.PHONY: lint lint-backend format format-fix check test test-backend build version test-db-up test-db-down test-db-logs
+
+# The release version lives in lua/abcql/version.lua; `build` stamps it into abcql-backend.
+VERSION := $(shell sed -n 's/^return "\(.*\)"$$/\1/p' lua/abcql/version.lua)
 
 lint: lint-backend
 	@echo "Running luacheck..."
@@ -21,9 +24,13 @@ check: lint format
 	@echo "All checks passed!"
 
 build:
-	@echo "Building abcql-backend..."
+	@test -n "$(VERSION)" || (echo "Could not read the version from lua/abcql/version.lua" && exit 1)
+	@echo "Building abcql-backend $(VERSION)..."
 	@mkdir -p bin
-	@cd backend && go build -o ../bin/abcql-backend .
+	@cd backend && go build -ldflags "-X main.version=$(VERSION)" -o ../bin/abcql-backend .
+
+version:
+	@echo "$(VERSION)"
 
 test: test-backend
 	@echo "Running tests..."

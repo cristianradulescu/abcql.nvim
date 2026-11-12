@@ -13,7 +13,8 @@ SQLite file) directly via a native driver and is usable standalone, independent 
 ## Commands
 
 ```bash
-make build          # go build backend/ -> bin/abcql-backend (gitignored)
+make build          # go build backend/ -> bin/abcql-backend (gitignored), stamped with the version
+make version        # print the release version (lua/abcql/version.lua)
 make lint           # lint-backend (gofmt -l + go vet on backend/) + luacheck lua/ tests/
 make format         # stylua --check . (verify formatting)
 make format-fix     # stylua . (apply formatting)
@@ -56,6 +57,31 @@ The Go backend is a separate module and doesn't follow this mirroring: its tests
 
 Style: 2-space indent, double quotes, always-parenthesized calls (see `.stylua.toml`); `luacheck`
 ignores unused-arg warnings (rule 212) and ships a relaxed `busted` global set for `tests/`.
+
+## Versioning and releases
+
+Semantic Versioning, with one version for the plugin and `abcql-backend`, kept in
+`lua/abcql/version.lua` (a single `return "X.Y.Z"` line: the Makefile's `VERSION` reads it with
+`sed`, and `make build` passes it as `-ldflags "-X main.version=..."`). `require("abcql").version`
+exposes it, and `:checkhealth abcql` (`Health.check_backend_binary`) warns when
+`abcql-backend version` reports anything else (`dev` means a plain `go build`). Between releases
+`main` keeps the last release's version, so the check catches a binary from another release, not one
+from an older commit of the same release. The public interface (what only breaks in a major
+release) is listed under "Versioning" in `README.md`; any other `abcql.*` module is internal.
+
+Every user-visible change (feature, fix, changed default, removal) adds a line under
+`## [Unreleased]` in `CHANGELOG.md` ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
+sections: Added/Changed/Deprecated/Removed/Fixed/Security), in the same commit as the change.
+Refactors, docs-only and test-only changes don't. A breaking change says so and how to migrate.
+
+Releasing `X.Y.Z` (the version changes only here):
+
+1. In `CHANGELOG.md`, rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, add a new empty
+   `## [Unreleased]` above it, and update the link references at the bottom (`[Unreleased]` compares
+   `vX.Y.Z...HEAD`, `[X.Y.Z]` points at the tag).
+2. Set `lua/abcql/version.lua` to `"X.Y.Z"`.
+3. `make check && make test`, commit as `Release vX.Y.Z`, then `git tag -a vX.Y.Z -m "abcql.nvim X.Y.Z"`
+   and push the commit and the tag.
 
 ## Architecture
 

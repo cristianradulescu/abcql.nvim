@@ -43,6 +43,7 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
 ```lua
 {
   "cristianradulescu/abcql.nvim",
+  version = "*", -- latest release (see Versioning); remove it to follow the main branch
   dependencies = {
     "nvim-lua/plenary.nvim",
   },
@@ -65,6 +66,36 @@ Run SQL queries, explore schemas, inspect results, and manage connections — al
   end
 }
 ```
+
+---
+
+## Versioning
+
+abcql.nvim follows [Semantic Versioning](https://semver.org). Releases are git tags (`v1.0.0`,
+`v1.1.0`, ...), and every release is described in [CHANGELOG.md](CHANGELOG.md). The plugin and
+`abcql-backend` are released together under one version: `make build` stamps it into the binary,
+and `:checkhealth abcql` warns when the backend you built doesn't match the plugin.
+
+- **Major** (`2.0.0`): something below stops working as before. Upgrade notes are in the changelog.
+- **Minor** (`1.1.0`): new features, options, commands or export formats; existing configs keep
+  working.
+- **Patch** (`1.0.1`): bug fixes only.
+
+The public interface that a minor or patch release won't break:
+
+- the `:Abcql*` commands and their arguments
+- `setup()` options, the datasource config files (`.abcql.lua`, `datasources.lua`), DSN syntax
+  and datasource flags
+- the default keys in the results panel and the tree, the `Abcql*` highlight groups, and the
+  `User AbcqlDatasourceAttached` event
+- the Lua functions used in the [installation example](#using-lazynvim): `require("abcql").setup`
+  and `.version`, `abcql.ui` `open` / `close` / `toggle_tree` / `toggle_results`, `abcql.db.query`
+  `execute_query_at_cursor` / `execute_buffer`, `abcql.db` `activate_datasource`, `abcql.history`
+  `pick` and `abcql.export` `export_current`
+- the `abcql-backend` CLI (`exec`, `serve`, `version`) and its JSON request/response protocol
+- data on disk: a release reads the query history an older 1.x release wrote
+
+Other `abcql.*` Lua modules are internal and may change in any release.
 
 ---
 
@@ -563,7 +594,7 @@ Run Neovim's built-in healthcheck for abcql:
 
 It validates:
 
-- The `abcql-backend` binary is present and runnable
+- The `abcql-backend` binary is present, runnable, and built from the same version as the plugin
 - Optional JSON export dependency (`jq`)
 - Optional tree-sitter `sql` parser (used for statement boundaries when present)
 - Datasource config structure

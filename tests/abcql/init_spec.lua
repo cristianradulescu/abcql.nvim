@@ -72,6 +72,11 @@ describe("abcql.nvim", function()
       assert.is_function(abcql.setup)
     end)
 
+    it("exposes the release version as a semver string", function()
+      assert.are.equal(require("abcql.version"), abcql.version)
+      assert.truthy(abcql.version:match("^%d+%.%d+%.%d+$"))
+    end)
+
     it("should call config setup with options", function()
       local config_setup_called = false
       local passed_opts = nil
