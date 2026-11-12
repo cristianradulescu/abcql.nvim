@@ -48,6 +48,26 @@ describe("History Storage", function()
       assert.is_true(ok)
       assert.is_nil(err)
     end)
+
+    it("creates the directory 0700 and tightens an existing one", function()
+      assert.is_true(Storage.ensure_dir())
+      local dir = Storage.get_history_dir()
+      assert.are.equal("rwx------", vim.fn.getfperm(dir))
+
+      vim.uv.fs_chmod(dir, 493) -- 0755, as older versions created it
+      assert.is_true(Storage.ensure_dir())
+      assert.are.equal("rwx------", vim.fn.getfperm(dir))
+    end)
+  end)
+
+  describe("file permissions", function()
+    it("writes entries 0600", function()
+      local id = Storage.generate_id()
+      assert.is_true(
+        Storage.write_entry({ id = id, query = "SELECT 1", result = { headers = { "1" }, rows = { { "1" } } } })
+      )
+      assert.are.equal("rw-------", vim.fn.getfperm(Storage.get_entry_path(id)))
+    end)
   end)
 
   describe("generate_id", function()

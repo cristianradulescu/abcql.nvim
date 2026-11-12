@@ -38,7 +38,9 @@ datacharmer/test_db's `employees` database — also a richer schema for manually
 tree/completion/results UI. `make test` doesn't start it; bring it up first.
 
 To run a single spec file directly (keep the `minimal_init` option: without it plenary's child
-Neovim loads the user's real config, including any language servers enabled there):
+Neovim loads the user's real config, including any language servers enabled there, and the
+user's ShaDa file, which `minimal_init` turns off with `shadafile=NONE` since specs type into the
+input history):
 
 ```bash
 nvim --headless --noplugin -u tests/minimal_init.lua \
@@ -73,12 +75,22 @@ wrapping the process with `proxychains4`. NULL cells are still serialized as the
 `vim.NIL`.
 
 `abcql.db.adapter.base:build_backend_request` builds that JSON request generically from `self.config`
-(host/port/user/password/database/options/proxy — already parsed/secret-resolved by
-`abcql.db.connection.registry`) plus the adapter's `ENGINE` field; most adapters don't need to
-override it. `abcql.db.query.execute_async`/`execute_sync` call `Backend.invoke`/`invoke_sync` and map
+(host/port/user/password/database/options/proxy — already parsed by
+`abcql.db.connection.registry`; a keyring `secret` is resolved here, see below) plus the adapter's
+`ENGINE` field; most adapters don't need to override it. It returns `request, nil` or `nil, err`
+(the keyring lookup failed), and every caller (`execute_async`/`execute_sync`, `Query.run`'s
+session path, `run_batch`, `Follow.preview`) turns `nil, err` into that query's error.
+`abcql.db.query.execute_async`/`execute_sync` call `Backend.invoke`/`invoke_sync` and map
 the JSON response straight onto `QueryResult` — there's no CLI-argv-building or tab-delimited-output
 parsing left on the Lua side. Passwords travel over the subprocess's stdin pipe only, never argv or a
-temp file.
+temp file. `buildDSN` (`backend/mysql.go`) adds `tls=preferred` unless the request's options name a
+`tls` value (an explicit one, `tls=false` included, wins).
+
+DSN userinfo follows one rule, in `abcql.db.connection.dsn.split_userinfo`: the authority runs to
+the first `/`, the userinfo ends at its last `@`, the user at the first `:`. `parse_dsn`
+percent-decodes user and password, `set_password` percent-encodes, and `strip_password`/`mask`
+(used by the loader, the editor menus and `:AbcqlDatasourceList`) go through the same split.
+Error messages never include the DSN.
 
 The request also carries `max_rows` (from `query.max_rows`, default 1000); the backend stops
 scanning after that many rows and sets `truncated: true`, which the results footer/winbar surface.
@@ -175,26 +187,40 @@ Datasources merge from three sources, later wins: `setup()` opts → `~/.config/
 (user) → `.abcql.lua` in cwd (local/project, highest priority). `abcql.config.loader` does the
 merging and tags each datasource with `source`/`source_path` for `:AbcqlDatasourceList`. DSN and
 proxy strings support `${VAR_NAME}` env expansion. Table-style datasources may also carry
-`readonly`/`confirm`/`highlight`/`auto_limit`/`lint_dangerous` flags, which travel through the loader and
-`registry:register_datasource(name, dsn, proxy, secret, opts)` onto the `Datasource` object; each
+`readonly`/`confirm`/`highlight`/`auto_limit`/`lint_dangerous`/`session`/`history_rows` flags, which travel through the loader
+(`normalize_datasource`, `get_datasource_configs`, `format_datasource_entry`), `editor.read_entry`,
+`Database.setup` and `registry:register_datasource(name, dsn, proxy, secret, opts)` onto the
+`Datasource` object; each
 config file (and `setup()`) may name a `default` datasource, same precedence. `setup()` also has
 `ui` (panel sizes, icons, cell width) and `query` (confirm policy, `max_rows`, `auto_limit`,
-`auto_attach`, `treesitter`, `lint_dangerous`) sections; modules read them via
+`auto_attach`, `treesitter`, `lint_dangerous`, `session`, `history_rows`) sections; modules read them via
 `require("abcql.config").ui/.query` with local fallbacks so they still work when config was never
-set up (tests). `:AbcqlDatasourceAdd` / `:AbcqlDatasourceUpdate` edit config files textually:
+set up (tests). `history_rows = false` (datasource > `query.history_rows`, default true;
+`History.rows_enabled`) makes `History.save` store the result with `rows = {}` and
+`rows_omitted = true` (query, headers, counts and errors kept; the live result is not modified).
+`:AbcqlDatasourceAdd` / `:AbcqlDatasourceUpdate` edit config files textually:
 `loader.add_datasource_to_file` inserts an
 entry right after the `datasources = {` line and `loader.update_datasource_in_file` replaces the
-brace-matched line range found by `find_datasource_entry`, so comments and sibling entries survive;
-both re-trust the file for `vim.secure.read`. The prompt flows live in `abcql.config.editor`
-(`add`/`update`), including the keyring step that calls `abcql.secret.store` (secret-tool,
-password over stdin) and writes a `secret` reference plus a password-less DSN instead of the
-credential. Only datasources with a `source_path` (local/user file) are updatable; `setup()`
-datasources are not.
+line range found by `find_datasource_entry`, which matches braces as Lua code (`lex_line` skips
+short/long strings and line/long comments), so comments and sibling entries survive;
+both re-trust the file for `vim.secure.read`. Config files and history entries are written with
+`abcql.fs.write_private` (temp file in the same directory, `0600`, fsync, rename; a symlink's target
+is replaced), the history directory is made `0700` by `abcql.fs.ensure_private_dir`. The prompt
+flows live in `abcql.config.editor` (`add`/`update`), including the keyring step that calls
+`abcql.secret.store` (secret-tool, password over stdin) and writes a `secret` reference plus a
+password-less DSN instead of the credential. Passwords are read with `Editor.read_secret`
+(`inputsecret()`, not in the input history; specs replace it), never `vim.ui.input`; a DSN typed
+with an inline password is removed from the input history (`Editor.forget_input`). Only datasources
+with a `source_path` (local/user file) are updatable; `setup()` datasources are not.
 
 Passwords can also be deferred to a keyring lookup
 (`secret = { service, account }` in a datasource, currently Linux `secret-tool` only via
-`abcql.secret` → `abcql.secret.linux`) instead of embedding them in the DSN — resolved once at
-`registry:register_datasource` time via `abcql.secret.lookup`.
+`abcql.secret` → `abcql.secret.linux`) instead of embedding them in the DSN. Registration does not
+look it up: the registry hands `secret` to the adapter, and `Adapter:resolve_password` (called by
+`build_backend_request`) runs `abcql.secret.lookup` on first use, keeps the password on the adapter
+for the session (a reload builds fresh adapters, so it is looked up again) and does not cache a
+failure. `secret-tool` calls have a `TIMEOUT_MS` (20 s) and the looked-up value only loses one
+trailing newline. The SQLite adapter's `resolve_password` returns nil.
 
 ### Fake in-process LSP client
 

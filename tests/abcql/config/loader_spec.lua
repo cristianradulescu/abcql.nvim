@@ -224,6 +224,16 @@ describe("Config Loader", function()
       assert.are.equal("DiagnosticError", configs.prod.highlight)
     end)
 
+    it("carries history_rows through to datasource configs", function()
+      local loaded = Loader.load_all_datasources({
+        prod = { dsn = "mysql://user@host:3306/db", history_rows = false },
+        dev = "mysql://user@localhost:3306/db",
+      })
+      assert.is_false(loaded.prod.history_rows)
+      assert.is_nil(loaded.dev.history_rows)
+      assert.is_false(Loader.get_datasource_configs(loaded).prod.history_rows)
+    end)
+
     it("returns the setup default when it names a configured datasource", function()
       local _, default = Loader.load_all_datasources({ dev = "mysql://user:pass@localhost:3306/db" }, "dev")
       assert.are.equal("dev", default)
@@ -394,7 +404,135 @@ describe("Config Loader add_datasource_to_file", function()
   it("set_dsn_password inserts or replaces the password", function()
     assert.are.equal("mysql://u:new@h/db", Loader.set_dsn_password("mysql://u@h/db", "new"))
     assert.are.equal("mysql://u:new@h/db", Loader.set_dsn_password("mysql://u:old@h/db", "new"))
-    assert.are.equal("mysql://u:p%w@h/db", Loader.set_dsn_password("mysql://u@h/db", "p%w"))
+    -- percent-encoded, so it parses back to the same password
+    assert.are.equal("mysql://u:p%25w@h/db", Loader.set_dsn_password("mysql://u@h/db", "p%w"))
+    assert.are.equal("mysql://u:new@h/db", Loader.set_dsn_password("mysql://u:p@ss@h/db", "new"))
+  end)
+
+  it("strip_dsn_password removes a password containing @ entirely", function()
+    -- the review's example: the old pattern stopped at the first @ and left "u@ss@host"
+    assert.are.equal("mysql://u@host:3306/db", Loader.strip_dsn_password("mysql://u:p@ss@host:3306/db"))
+    assert.are.equal("mysql://u@host:3306/db", Loader.strip_dsn_password("mysql://u:a@b{c}@host:3306/db"))
+  end)
+
+  it("find_datasource_entry ignores braces inside strings and comments", function()
+    local lines = {
+      "return {",
+      "  datasources = {",
+      '    dev = "mysql://u:pa{ss@h:3306/db",',
+      '    prod = { dsn = "mysql://u@p:3306/db", readonly = true },',
+      '    other = "mysql://u:x@o:3306/db",',
+      "  },",
+      "}",
+    }
+    -- the review's example: brace counting used to return 3, 6
+    assert.are.same({ 3, 3 }, { Loader.find_datasource_entry(lines, "dev") })
+    assert.are.same({ 4, 4 }, { Loader.find_datasource_entry(lines, "prod") })
+    assert.are.same({ 5, 5 }, { Loader.find_datasource_entry(lines, "other") })
+
+    lines = {
+      "return {",
+      "  datasources = {",
+      "    dev = 'mysql://u:pa}ss@h:3306/db', -- closes } here",
+      "    prod = {",
+      '      dsn = "mysql://u:p\\"}{@h/db", -- {',
+      "      proxy = [[socks5://h:1}080]],",
+      "      --[[ a block comment { ]] readonly = true,",
+      "      --[==[ a multi-line",
+      "      } comment ]==] confirm = 'always',",
+      "    },",
+      '    ["my}app"] = [=[mysql://u:]]{@h/db]=],',
+      "  },",
+      "}",
+    }
+    assert.are.same({ 3, 3 }, { Loader.find_datasource_entry(lines, "dev") })
+    assert.are.same({ 4, 10 }, { Loader.find_datasource_entry(lines, "prod") })
+    assert.are.same({ 11, 11 }, { Loader.find_datasource_entry(lines, "my}app") })
+  end)
+
+  it("find_datasource_entry skips entries inside a long comment", function()
+    local lines = {
+      "return {",
+      "  datasources = {",
+      "    --[[",
+      '    dev = "mysql://u@old/db",',
+      "    ]]",
+      '    dev = "mysql://u@new/db",',
+      "  },",
+      "}",
+    }
+    assert.are.same({ 6, 6 }, { Loader.find_datasource_entry(lines, "dev") })
+  end)
+
+  it("update_datasource_in_file keeps siblings when a password contains { or }", function()
+    for _, password in ipairs({ "pa{ss", "pa}ss" }) do
+      local path = dir .. "/.abcql.lua"
+      local f = assert(io.open(path, "w"))
+      f:write(table.concat({
+        "return {",
+        "  datasources = {",
+        '    dev = "mysql://u:' .. password .. '@h:3306/db",',
+        '    prod = { dsn = "mysql://u@p:3306/db", readonly = true },',
+        '    other = "mysql://u:x@o:3306/db",',
+        "  },",
+        "}",
+        "",
+      }, "\n"))
+      f:close()
+
+      local ok, err = Loader.update_datasource_in_file(path, "dev", { dsn = "mysql://u:new@h:3306/db" })
+      assert.is_true(ok, err)
+      local config = dofile(path)
+      assert.are.equal("mysql://u:new@h:3306/db", config.datasources.dev)
+      assert.are.equal("mysql://u@p:3306/db", config.datasources.prod.dsn)
+      assert.is_true(config.datasources.prod.readonly)
+      assert.are.equal("mysql://u:x@o:3306/db", config.datasources.other)
+
+      -- and the entry with the brace itself can be updated
+      assert.is_true(Loader.update_datasource_in_file(path, "dev", { dsn = "mysql://u:" .. password .. "@h:3306/db" }))
+      ok, err = Loader.update_datasource_in_file(path, "dev", { dsn = "mysql://u:again@h:3306/db" })
+      assert.is_true(ok, err)
+      config = dofile(path)
+      assert.are.equal("mysql://u:again@h:3306/db", config.datasources.dev)
+      assert.are.equal("mysql://u@p:3306/db", config.datasources.prod.dsn)
+      assert.are.equal("mysql://u:x@o:3306/db", config.datasources.other)
+    end
+  end)
+
+  it("writes config files 0600, also when rewriting a group-readable file", function()
+    local path = dir .. "/.abcql.lua"
+    assert.is_true(Loader.add_datasource_to_file(path, "dev", { dsn = "mysql://u:p@h/db" }))
+    assert.are.equal("rw-------", vim.fn.getfperm(path))
+
+    vim.uv.fs_chmod(path, 436) -- 0664, e.g. created by an older version
+    assert.is_true(Loader.update_datasource_in_file(path, "dev", { dsn = "mysql://u:q@h/db" }))
+    assert.are.equal("rw-------", vim.fn.getfperm(path))
+
+    vim.uv.fs_chmod(path, 436)
+    assert.is_true(Loader.add_datasource_to_file(path, "test", { dsn = "mysql://u@h/test" }))
+    assert.are.equal("rw-------", vim.fn.getfperm(path))
+
+    local user = dir .. "/nvim/abcql/datasources.lua"
+    assert.is_true(Loader.create_config_file(user))
+    assert.are.equal("rw-------", vim.fn.getfperm(user))
+  end)
+
+  it("leaves the file intact and no temp file behind when a write fails", function()
+    local path = dir .. "/.abcql.lua"
+    assert.is_true(Loader.add_datasource_to_file(path, "dev", { dsn = "mysql://u:p@h/db" }))
+    local before = assert(io.open(path)):read("*a")
+
+    local original_write = vim.uv.fs_write
+    vim.uv.fs_write = function()
+      return nil, "ENOSPC: no space left on device"
+    end
+    local ok, err = Loader.update_datasource_in_file(path, "dev", { dsn = "mysql://u:q@h/db" })
+    vim.uv.fs_write = original_write
+
+    assert.is_false(ok)
+    assert.is_not_nil(err:find("ENOSPC", 1, true))
+    assert.are.equal(before, assert(io.open(path)):read("*a"))
+    assert.are.same({ ".abcql.lua" }, vim.fn.readdir(dir))
   end)
 
   it("find_datasource_entry locates string and table entries", function()
@@ -483,6 +621,13 @@ describe("Config Loader add_datasource_to_file", function()
         lint_dangerous = "no",
       })
       assert.are.equal('    dev = "mysql://u@h/db",', text)
+    end)
+
+    it("writes the history_rows flag when it is a boolean", function()
+      local text = Loader.format_datasource_entry("prod", { dsn = "mysql://u@h/db", history_rows = false })
+      assert.is_false(assert(loadstring("return {" .. text .. "}"))().prod.history_rows)
+      local bad = Loader.format_datasource_entry("prod", { dsn = "mysql://u@h/db", history_rows = "no" })
+      assert.are.equal('    prod = "mysql://u@h/db",', bad)
     end)
 
     it("keeps a valid session flag and drops an invalid one", function()

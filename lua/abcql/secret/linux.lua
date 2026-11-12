@@ -1,7 +1,44 @@
 local M = {}
 
+--- How long a `secret-tool` call may take. It blocks the editor, and a locked
+--- keyring may be waiting on an unlock prompt (or never answer at all).
+M.TIMEOUT_MS = 20000
+
+--- Exit code vim.system reports when it killed the process at its timeout
+local TIMEOUT_CODE = 124
+
 local function trim(s)
   return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+--- Error for a `secret-tool` run that did not succeed
+--- @param result vim.SystemCompleted
+--- @param action string "lookup" | "store"
+--- @param fallback string Message when secret-tool printed nothing
+--- @return string
+local function failure(result, action, fallback)
+  if result.code == TIMEOUT_CODE then
+    return string.format(
+      "secret-tool %s timed out after %ds (is the keyring locked, or its unlock prompt unanswered?)",
+      action,
+      math.floor(M.TIMEOUT_MS / 1000)
+    )
+  end
+  local err = trim(result.stderr or "")
+  if err == "" then
+    err = fallback
+  end
+  return err
+end
+
+--- Run secret-tool, giving up after M.TIMEOUT_MS
+--- @param cmd string[]
+--- @param opts table vim.system options
+--- @return vim.SystemCompleted
+local function run(cmd, opts)
+  opts.timeout = M.TIMEOUT_MS
+  -- nil when the killed process left its pipes open (a child still holding them)
+  return vim.system(cmd, opts):wait(M.TIMEOUT_MS) or { code = TIMEOUT_CODE, signal = 9, stdout = "", stderr = "" }
 end
 
 function M.is_available()
@@ -13,16 +50,15 @@ function M.lookup(service, account)
     return nil, "secret-tool not found; install libsecret-tools"
   end
 
-  local result = vim.system({ "secret-tool", "lookup", "service", service, "account", account }, { text = true }):wait()
+  local result = run({ "secret-tool", "lookup", "service", service, "account", account }, { text = true })
   if result.code ~= 0 then
-    local err = trim(result.stderr or "")
-    if err == "" then
-      err = "secret not found"
-    end
-    return nil, err
+    return nil, failure(result, "lookup", "secret not found")
   end
 
-  local secret = trim(result.stdout or "")
+  -- The secret is returned exactly as stored: only the single newline
+  -- secret-tool appends when writing to a terminal is dropped, so a password
+  -- starting or ending with a space survives.
+  local secret = (result.stdout or ""):gsub("\n$", "")
   if secret == "" then
     return nil, "secret lookup returned empty value"
   end
@@ -44,18 +80,12 @@ function M.store(service, account, password, label)
   end
 
   label = label or ("abcql " .. account)
-  local result = vim
-    .system(
-      { "secret-tool", "store", "--label=" .. label, "service", service, "account", account },
-      { text = true, stdin = password }
-    )
-    :wait()
+  local result = run(
+    { "secret-tool", "store", "--label=" .. label, "service", service, "account", account },
+    { text = true, stdin = password }
+  )
   if result.code ~= 0 then
-    local err = trim(result.stderr or "")
-    if err == "" then
-      err = "secret-tool store failed with code " .. tostring(result.code)
-    end
-    return false, err
+    return false, failure(result, "store", "secret-tool store failed with code " .. tostring(result.code))
   end
 
   return true, nil

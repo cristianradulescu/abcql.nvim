@@ -38,7 +38,12 @@ end
 --- @param opts? table Optional parameters passed to adapter's build_backend_request
 --- @return table|nil handle vim.system handle (nil when the backend could not be started)
 function Query.execute_async(adapter, query, callback, opts)
-  local request = adapter:build_backend_request(query, opts or {})
+  local request, request_err = adapter:build_backend_request(query, opts or {})
+  if not request then
+    -- e.g. the keyring lookup failed: reported as this query's error
+    callback(nil, request_err)
+    return nil
+  end
 
   return Backend.invoke(request, function(response, err)
     if err then
@@ -57,7 +62,10 @@ end
 --- @return QueryResult|nil results Parsed results
 --- @return string|nil error Error message if failed
 function Query.execute_sync(adapter, query, opts)
-  local request = adapter:build_backend_request(query, opts or {})
+  local request, request_err = adapter:build_backend_request(query, opts or {})
+  if not request then
+    return nil, request_err
+  end
 
   local response, err = Backend.invoke_sync(request)
   if err then
@@ -415,7 +423,11 @@ function Query.run(sql, datasource, opts)
 
     local handle
     if persistent then
-      local request = datasource.adapter:build_backend_request(sent_sql, exec_opts)
+      local request, request_err = datasource.adapter:build_backend_request(sent_sql, exec_opts)
+      if not request then
+        on_result(nil, request_err)
+        return
+      end
       handle = Query.execute_batch(
         opts.bufnr,
         datasource,
@@ -548,7 +560,24 @@ local function run_batch(bufnr, datasource, statements)
 
   local adapter = datasource.adapter
   local database = adapter and adapter.config and adapter.config.database
-  local request = adapter:build_backend_request("", {})
+  local request, request_err = adapter:build_backend_request("", {})
+  if not request then
+    -- Nothing ran (e.g. the keyring lookup failed): show it as the batch's error.
+    local text = table.concat(
+      vim.tbl_map(function(s)
+        return s.text
+      end, statements),
+      ";\n"
+    )
+    local _, history_id = History.save(text, datasource.name, database, nil, request_err)
+    Status.done({
+      bufnr = bufnr,
+      start_line = statements[1].start_line,
+      end_line = statements[#statements].end_line,
+    }, request_err)
+    UI.display(request_err, nil, { datasource = datasource, query = text, history_id = history_id })
+    return
+  end
   local limit = Limit.for_datasource(datasource)
 
   -- A statement bounded by a LIMIT (its own or the auto-LIMIT) is returned in

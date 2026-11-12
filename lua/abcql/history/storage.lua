@@ -11,20 +11,16 @@ function Storage.get_history_dir()
   return vim.fn.stdpath("data") .. "/abcql/query_history"
 end
 
---- Ensure the history directory exists
+--- Ensure the history directory exists and is private (0700, also when an
+--- older version created it with looser permissions): entries hold query text
+--- and result rows.
 ---@return boolean success True if directory exists or was created
 ---@return string|nil error Error message if failed
 function Storage.ensure_dir()
-  local dir = Storage.get_history_dir()
-  if vim.fn.isdirectory(dir) == 1 then
-    return true, nil
+  local ok, err = require("abcql.fs").ensure_private_dir(Storage.get_history_dir())
+  if not ok then
+    return false, "Failed to create history directory: " .. tostring(err)
   end
-
-  local ok = vim.fn.mkdir(dir, "p")
-  if ok == 0 then
-    return false, "Failed to create history directory: " .. dir
-  end
-
   return true, nil
 end
 
@@ -123,14 +119,12 @@ function Storage.write_entry(entry)
     return false, encode_err
   end
 
+  -- 0600 whatever the umask
   local path = Storage.get_entry_path(entry.id)
-  local file, open_err = io.open(path, "w")
-  if not file then
-    return false, "Failed to open file for writing: " .. tostring(open_err)
+  local written, write_err = require("abcql.fs").write_private(path, json)
+  if not written then
+    return false, write_err
   end
-
-  file:write(json)
-  file:close()
 
   return true, nil
 end

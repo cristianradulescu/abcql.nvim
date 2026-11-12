@@ -230,7 +230,7 @@ describe("Config add_datasource", function()
       end
       return original_executable(name)
     end
-    -- Record the `store` call; answer the `lookup` that the reload performs afterwards
+    -- Record the `store` call; answer a `lookup` (the reload itself no longer looks secrets up)
     local stored
     vim.system = function(cmd, opts)
       if cmd[2] == "store" then

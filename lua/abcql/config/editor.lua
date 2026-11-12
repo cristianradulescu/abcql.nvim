@@ -1,22 +1,89 @@
 --- Interactive add/update of datasources in config files (.abcql.lua or the
---- user datasources file). All prompts go through vim.ui.input/select so they
---- work with whatever picker the user has installed.
+--- user datasources file). Prompts go through vim.ui.input/select so they work
+--- with whatever picker the user has installed -- except passwords, which are
+--- read with inputsecret() (M.read_secret): not echoed, and not recorded in the
+--- input history that ShaDa writes to disk.
 ---@class abcql.config.Editor
 local M = {}
 
 local loader = require("abcql.config.loader")
+local Dsn = require("abcql.db.connection.dsn")
 
 --- Prompt for a line of text; nil (cancelled) aborts the whole flow
 --- @param prompt string
 --- @param default string
---- @param callback fun(value: string)
+--- @param callback fun(value: string, raw: string) `value` is trimmed, `raw` is what was typed
 local function ask(prompt, default, callback)
   vim.ui.input({ prompt = prompt, default = default }, function(value)
     if value == nil then
       vim.notify("abcql: cancelled", vim.log.levels.INFO)
       return
     end
-    callback(vim.trim(value))
+    callback(vim.trim(value), value)
+  end)
+end
+
+--- Read a password without echoing it and without adding it to the input
+--- history. Replaced in specs.
+--- @param prompt string
+--- @return string|nil password nil when cancelled (<C-c>); <Esc> gives ""
+function M.read_secret(prompt)
+  local ok, value = pcall(vim.fn.inputsecret, prompt)
+  if not ok then
+    return nil
+  end
+  return value
+end
+
+--- Prompt for a password (see M.read_secret); cancelling aborts the flow.
+--- The value is not trimmed: spaces may be part of a password.
+--- @param prompt string
+--- @param callback fun(password: string)
+local function ask_secret(prompt, callback)
+  local value = M.read_secret(prompt)
+  if value == nil then
+    vim.notify("abcql: cancelled", vim.log.levels.INFO)
+    return
+  end
+  callback(value)
+end
+
+--- Whether a DSN as typed carries a password of its own
+--- @param dsn string
+--- @return boolean
+local function has_inline_password(dsn)
+  local parts = Dsn.split_userinfo(dsn)
+  return parts ~= nil and parts.password ~= nil and parts.password ~= ""
+end
+
+--- Remove a typed value from the "input" history. vim.ui.input's default
+--- implementation (vim.fn.input) records it there and ShaDa saves that history on
+--- exit, so a DSN typed with its password must not stay in it.
+--- @param value string
+function M.forget_input(value)
+  if type(value) ~= "string" or value == "" then
+    return
+  end
+  local last = vim.fn.histnr("input")
+  for i = last, math.max(1, last - vim.o.history), -1 do
+    if vim.fn.histget("input", i) == value then
+      vim.fn.histdel("input", i)
+    end
+  end
+end
+
+--- Prompt for a DSN; when the typed DSN has an inline password it is dropped
+--- from the input history before `callback` runs.
+--- @param prompt string
+--- @param default string
+--- @param callback fun(dsn: string)
+local function ask_dsn(prompt, default, callback)
+  ask(prompt, default, function(dsn, raw)
+    if has_inline_password(dsn) then
+      M.forget_input(raw)
+      M.forget_input(dsn)
+    end
+    callback(dsn)
   end)
 end
 
@@ -84,7 +151,7 @@ end
 --- @param entry table
 --- @return string|nil
 local function dsn_password(entry)
-  local parsed = require("abcql.db.connection.dsn").parse_dsn(loader.expand_env_vars(entry.dsn))
+  local parsed = Dsn.parse_dsn(loader.expand_env_vars(entry.dsn))
   local password = parsed and parsed.password
   if password == "" then
     return nil
@@ -97,44 +164,75 @@ end
 --- @return boolean
 local function is_file_dsn(entry)
   local scheme = (entry.dsn or ""):match("^(%w+)://")
-  return scheme ~= nil and require("abcql.db.connection.dsn").FILE_SCHEMES[scheme:lower()] == true
+  return scheme ~= nil and Dsn.FILE_SCHEMES[scheme:lower()] == true
 end
 
---- Ask where the password should live (DSN or keyring). Calls back once the
---- entry reflects the choice; the keyring step is skipped without secret-tool.
+--- Labels of the add flow's password step
+local PASSWORD_NONE = "No password"
+local PASSWORD_KEYRING = "Enter it, stored in the keyring (secret-tool)"
+local PASSWORD_FILE = "Enter it, saved in the DSN in the config file"
+
+--- Ask for the password and where it should live (keyring or DSN). Calls back
+--- once the entry reflects the choice. The password itself is read with
+--- inputsecret; a password typed inline in the DSN can be moved to the keyring.
 --- @param name string
 --- @param entry table
 --- @param callback fun()
 local function ask_password_storage(name, entry, callback)
-  if is_file_dsn(entry) or not require("abcql.secret").is_available() then
+  if is_file_dsn(entry) then
     callback()
     return
   end
+  local keyring = require("abcql.secret").is_available()
 
   local in_dsn = dsn_password(entry)
-  local keyring_label = in_dsn and "Move it to the keyring (secret-tool)" or "Store it in the keyring (secret-tool)"
-  local file_label = in_dsn and "Keep it in the DSN" or "None / it is in the DSN"
-
-  choose("Password for '" .. name .. "':", { file_label, keyring_label }, function(choice)
-    if choice == file_label then
+  if in_dsn then
+    if not keyring then
       callback()
       return
     end
-    if in_dsn then
-      store_in_keyring(name, entry, in_dsn, function()
-        callback()
-      end)
-      return
-    end
-    ask("Password (stored in the keyring only): ", "", function(password)
-      if password == "" then
-        vim.notify("abcql: empty password, nothing stored in the keyring", vim.log.levels.WARN)
+    local keep, move = "Keep it in the DSN", "Move it to the keyring (secret-tool)"
+    choose("Password for '" .. name .. "':", { keep, move }, function(choice)
+      if choice == keep then
         callback()
         return
       end
-      store_in_keyring(name, entry, password, function()
+      store_in_keyring(name, entry, in_dsn, function()
         callback()
       end)
+    end)
+    return
+  end
+
+  local items = { PASSWORD_NONE }
+  if keyring then
+    table.insert(items, PASSWORD_KEYRING)
+  end
+  table.insert(items, PASSWORD_FILE)
+  choose("Password for '" .. name .. "':", items, function(choice)
+    if choice == PASSWORD_NONE then
+      callback()
+      return
+    end
+    local prompt = choice == PASSWORD_KEYRING and "Password (stored in the keyring only): " or "Password: "
+    ask_secret(prompt, function(password)
+      if password == "" then
+        vim.notify("abcql: empty password, none set", vim.log.levels.WARN)
+        callback()
+        return
+      end
+      if choice == PASSWORD_KEYRING then
+        store_in_keyring(name, entry, password, function()
+          callback()
+        end)
+        return
+      end
+      local with_password = loader.set_dsn_password(entry.dsn, password)
+      if with_password == entry.dsn then
+        vim.notify("abcql: the DSN names no user, so no password was set", vim.log.levels.WARN)
+      end
+      entry.dsn = with_password
+      callback()
     end)
   end)
 end
@@ -186,8 +284,9 @@ function M.add(scope)
         vim.notify("abcql: a name is required", vim.log.levels.WARN)
         return
       end
-      -- sqlite:///path/to/file.db for a SQLite database
-      ask("DSN: ", "mysql://user:password@localhost:3306/database", function(dsn)
+      -- sqlite:///path/to/file.db for a SQLite database. No password in the
+      -- default: it is asked for next, without echo or history.
+      ask_dsn("DSN (password asked next): ", "mysql://user@localhost:3306/database", function(dsn)
         if dsn == "" then
           vim.notify("abcql: a DSN is required", vim.log.levels.WARN)
           return
@@ -266,6 +365,7 @@ function M.read_entry(path, name)
     auto_limit = raw.auto_limit,
     lint_dangerous = raw.lint_dangerous,
     session = raw.session,
+    history_rows = raw.history_rows,
   },
     nil
 end
@@ -287,9 +387,24 @@ local function describe(entry)
     table.insert(parts, "confirm=" .. entry.confirm)
   end
   if entry.proxy then
-    table.insert(parts, "proxy=" .. entry.proxy)
+    table.insert(parts, "proxy=" .. Dsn.mask(entry.proxy))
   end
   return table.concat(parts, " ")
+end
+
+--- A DSN typed in the update flow (whose prompt is pre-filled without the
+--- password) gets the old DSN's password back, unless it has one of its own or
+--- names no user. The password is carried over as written (raw), so a `${VAR}`
+--- reference stays a reference.
+--- @param dsn string The DSN as typed
+--- @param raw_password string|nil The old DSN's raw password
+--- @return string
+local function keep_password(dsn, raw_password)
+  local parts = Dsn.split_userinfo(dsn)
+  if not raw_password or not parts or parts.password or not parts.user or parts.user == "" then
+    return dsn
+  end
+  return parts.prefix .. parts.user .. ":" .. raw_password .. "@" .. parts.rest
 end
 
 --- Menu loop for editing an entry; calls back with the final entry on Save
@@ -302,14 +417,14 @@ local function edit_loop(name, entry, on_save)
   end
 
   local file = is_file_dsn(entry)
-  local items = { "Save", "DSN: " .. (entry.dsn or "") }
+  local items = { "Save", "DSN: " .. Dsn.mask(entry.dsn or "") }
   if not file then
     table.insert(items, "Password: " .. (entry.secret and "keyring" or (dsn_password(entry) and "in DSN" or "none")))
   end
   table.insert(items, "Readonly: " .. (entry.readonly and "on" or "off"))
   table.insert(items, "Confirm: " .. (entry.confirm or "default"))
   if not file then
-    table.insert(items, "Proxy: " .. (entry.proxy or "none"))
+    table.insert(items, "Proxy: " .. (entry.proxy and Dsn.mask(entry.proxy) or "none"))
   end
 
   choose("Update '" .. name .. "' (" .. describe(entry) .. "):", items, function(choice)
@@ -317,9 +432,13 @@ local function edit_loop(name, entry, on_save)
     if field == "Save" then
       on_save(entry)
     elseif field == "DSN" then
-      ask("DSN: ", entry.dsn or "", function(dsn)
+      -- Pre-filled without the password, which is kept unless a new one is typed
+      local old = Dsn.split_userinfo(entry.dsn or "")
+      local raw_password = old and old.password ~= "" and old.password or nil
+      local prompt = raw_password and "DSN (its password is kept; change it under Password): " or "DSN: "
+      ask_dsn(prompt, loader.strip_dsn_password(entry.dsn or ""), function(dsn)
         if dsn ~= "" then
-          entry.dsn = dsn
+          entry.dsn = keep_password(dsn, raw_password)
         end
         again()
       end)
@@ -333,22 +452,27 @@ local function edit_loop(name, entry, on_save)
       end
       if entry.secret then
         table.insert(options, "Stop using the keyring (password back in the DSN)")
+      elseif dsn_password(entry) then
+        table.insert(options, "Remove the password from the DSN")
       end
       choose("Password for '" .. name .. "':", options, function(opt)
         if opt:match("^Set password in the DSN") or opt:match("^Stop using") then
-          ask("Password: ", "", function(password)
+          ask_secret("Password: ", function(password)
             if password ~= "" then
               entry.dsn = loader.set_dsn_password(entry.dsn, password)
             end
             entry.secret = nil
             again()
           end)
+        elseif opt:match("^Remove") then
+          entry.dsn = loader.strip_dsn_password(entry.dsn)
+          again()
         elseif opt:match("^Move") then
           store_in_keyring(name, entry, dsn_password(entry), function()
             again()
           end)
         else
-          ask("Password (stored in the keyring only): ", "", function(password)
+          ask_secret("Password (stored in the keyring only): ", function(password)
             if password == "" then
               again()
               return

@@ -24,7 +24,7 @@ end
 local function parse_file_dsn(scheme, rest)
   local path, query = rest:match("^([^?]*)%??(.*)$")
   if path == "" then
-    return nil, "Invalid DSN format: " .. scheme .. "://" .. rest .. " (expected " .. scheme .. ":///path/to/file.db)"
+    return nil, "Invalid DSN format: missing file path (expected " .. scheme .. ":///path/to/file.db)"
   end
   if path ~= ":memory:" then
     path = vim.fn.fnamemodify(vim.fn.expand(path), ":p")
@@ -44,14 +44,120 @@ end
 --- Schemes whose DSN names a local database file instead of a server
 M.FILE_SCHEMES = { sqlite = true }
 
---- Parse a DSN string into components
+--- Decode `%XX` escapes. A `%` not followed by two hex digits is kept as is, so
+--- an unencoded password such as `50%off` still means what it says.
+--- @param s string
+--- @return string
+function M.percent_decode(s)
+  return (s:gsub("%%(%x%x)", function(hex)
+    return string.char(tonumber(hex, 16))
+  end))
+end
+
+--- Percent-encode everything but RFC 3986 unreserved characters (letters,
+--- digits, `-._~`). `$` is encoded too, so `${...}` in a password is not taken
+--- for an environment variable reference.
+--- @param s string
+--- @return string
+function M.percent_encode(s)
+  return (s:gsub("[^%w%-%._~]", function(c)
+    return string.format("%%%02X", c:byte())
+  end))
+end
+
+--- Split a server DSN (`scheme://[user[:password]@]host[:port]/database[?options]`, or a
+--- proxy URL of the same shape) at its userinfo. This is the one rule every parse, strip,
+--- set and display mask uses: the authority runs from `://` to the first `/`; inside it the
+--- userinfo ends at the LAST `@` (so a raw `@` in a password works), and the user ends at
+--- the first `:`. A `/` in a password must be written `%2F`. Parts are raw (not decoded).
+--- File DSNs (sqlite://) and strings without a scheme give nil.
+--- @param dsn string
+--- @return { prefix: string, user: string|nil, password: string|nil, rest: string }|nil parts
+---   `prefix` is `scheme://`, `rest` is everything after the userinfo (`host:port/db?...`);
+---   `user` is nil without userinfo, `password` is nil without a `:` in the userinfo
+function M.split_userinfo(dsn)
+  if type(dsn) ~= "string" then
+    return nil
+  end
+  local prefix, scheme, after = dsn:match("^((%w+)://)(.*)$")
+  if not prefix or M.FILE_SCHEMES[scheme:lower()] then
+    return nil
+  end
+  local authority = after:match("^[^/]*")
+  local at = authority:match("^.*()@")
+  if not at then
+    return { prefix = prefix, rest = after }
+  end
+  local userinfo = after:sub(1, at - 1)
+  local user, password = userinfo:match("^([^:]*):(.*)$")
+  return { prefix = prefix, user = user or userinfo, password = password, rest = after:sub(at + 1) }
+end
+
+--- Remove the password from a DSN (`scheme://user:pass@host/db` -> `scheme://user@host/db`).
+--- Anything that is not a server DSN is returned unchanged.
+--- @param dsn string
+--- @return string
+function M.strip_password(dsn)
+  local parts = M.split_userinfo(dsn)
+  if not parts or not parts.password then
+    return dsn
+  end
+  return parts.prefix .. parts.user .. "@" .. parts.rest
+end
+
+--- Set (or replace) the password of a DSN that names a user. The password is
+--- percent-encoded, so `parse_dsn` gives it back exactly.
+--- @param dsn string
+--- @param password string
+--- @return string dsn Unchanged when it names no user
+function M.set_password(dsn, password)
+  local parts = M.split_userinfo(dsn)
+  if not parts or not parts.user or parts.user == "" then
+    return dsn
+  end
+  return parts.prefix .. parts.user .. ":" .. M.percent_encode(password) .. "@" .. parts.rest
+end
+
+--- A DSN (or proxy URL) safe to show: the password replaced by `****`. For a
+--- string without a scheme, everything before the last `@` of its first
+--- `/`-separated part is masked, since it can't be told apart from a password.
+--- @param dsn string|nil
+--- @return string
+function M.mask(dsn)
+  if type(dsn) ~= "string" then
+    return ""
+  end
+  local parts = M.split_userinfo(dsn)
+  if parts then
+    if not parts.password or parts.password == "" then
+      return dsn
+    end
+    return parts.prefix .. parts.user .. ":****@" .. parts.rest
+  end
+  if dsn:match("^%w+://") then
+    return dsn -- a file DSN: no userinfo
+  end
+  local at = dsn:match("^[^/]*()@")
+  if at then
+    return "****" .. dsn:sub(at)
+  end
+  return dsn
+end
+
+--- Parse a DSN string into components. User and password are percent-decoded
+--- (`mysql://u:p%40ss@host/db` has the password `p@ss`). Error messages never
+--- contain the password.
 --- @param dsn string DSN in format: scheme://user:password@host:port/database, or sqlite://<path>
 --- @return table|nil Parsed DSN components or nil on error
 --- @return string|nil Error message if parsing failed
 function M.parse_dsn(dsn)
+  if type(dsn) ~= "string" then
+    return nil, "Invalid DSN: expected a string"
+  end
   local scheme = dsn:match("^(%w+)://")
   if not scheme then
-    return nil, "Invalid DSN format: " .. dsn
+    return nil,
+      "Invalid DSN format: missing scheme (expected mysql://user@host:port/database or sqlite:///path/to/file.db)"
   end
 
   local rest = dsn:sub(#scheme + 4)
@@ -60,27 +166,18 @@ function M.parse_dsn(dsn)
     return parse_file_dsn(scheme:lower(), rest)
   end
 
-  local user, password, host, port, database, options
+  local host, port, database, options
 
-  local auth_and_rest = rest:match("^([^/]+)(.*)$")
-  if not auth_and_rest then
-    return nil, "Invalid DSN format: " .. dsn
+  if not rest:match("^[^/]") then
+    return nil, "Invalid DSN format: missing host (expected " .. scheme .. "://user@host:port/database)"
   end
 
-  local auth_part = auth_and_rest
-  local path_part = rest:match("^[^/]+(/.*)$") or ""
+  local parts = assert(M.split_userinfo(dsn))
+  local auth_part = parts.rest:match("^[^/]*")
+  local path_part = parts.rest:sub(#auth_part + 1)
 
-  if auth_part:find("@") then
-    local user_pass, host_port = auth_part:match("^(.+)@(.+)$")
-    if user_pass then
-      if user_pass:find(":") then
-        user, password = user_pass:match("^([^:]+):(.+)$")
-      else
-        user = user_pass
-      end
-      auth_part = host_port
-    end
-  end
+  local user = parts.user and parts.user ~= "" and M.percent_decode(parts.user) or nil
+  local password = parts.password and parts.password ~= "" and M.percent_decode(parts.password) or nil
 
   host, port = auth_part:match("^([^:]+):(%d+)$")
   if not host then

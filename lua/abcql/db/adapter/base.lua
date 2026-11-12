@@ -1,4 +1,4 @@
----@alias AdapterConfig { host?: string, port?: number, user?: string, password?: string, database?: string, path?: string, options?: table<string, string>, proxy?: string }
+---@alias AdapterConfig { host?: string, port?: number, user?: string, password?: string, secret?: abcql.SecretRef, database?: string, path?: string, options?: table<string, string>, proxy?: string }
 
 ---@class abcql.db.adapter.Adapter
 ---@field config {}
@@ -93,20 +93,47 @@ end
 local function parse_proxy_url(proxy_url)
   local proxy_type, host, port = proxy_url:match("^(socks[45])://([^:]+):(%d+)$")
   if not proxy_type then
-    return nil, "Invalid proxy URL format: " .. proxy_url .. " (expected socks4://host:port or socks5://host:port)"
+    return nil,
+      "Invalid proxy URL format: "
+        .. require("abcql.db.connection.dsn").mask(proxy_url)
+        .. " (expected socks4://host:port or socks5://host:port)"
   end
   return { type = proxy_type, host = host, port = tonumber(port) }, nil
 end
 
+--- The connection password: the DSN's, or -- with a keyring `secret` -- looked
+--- up the first time a request is built and then kept on this adapter for the
+--- rest of the session. A datasource reload creates fresh adapters, which look
+--- it up again. A failed lookup is not kept, so the next query retries.
+--- @return string|nil password
+--- @return string|nil err
+function Adapter:resolve_password()
+  if self.config.password ~= nil or self.config.secret == nil then
+    return self.config.password, nil
+  end
+  local password, err = require("abcql.secret").lookup(self.config.secret)
+  if not password then
+    return nil, "Failed to resolve keyring secret: " .. tostring(err or "no value returned")
+  end
+  self.config.password = password
+  return password, nil
+end
+
 --- Build the JSON-serializable request table sent to abcql-backend for a query.
 --- Generic across engines: connection fields come straight from `self.config`
---- (already parsed/secret-resolved by abcql.db.connection.registry), so most
---- adapters shouldn't need to override this.
+--- (already parsed by abcql.db.connection.registry; a keyring secret is
+--- resolved here, on first use), so most adapters shouldn't need to override this.
 --- @param query string The SQL query to execute
 --- @param opts table|nil Optional parameters (database?: string, timeout?: number in ms, max_rows?: number)
---- @return table request
+--- @return table|nil request nil when the password could not be resolved
+--- @return string|nil err Why there is no request (e.g. the keyring lookup failed)
 function Adapter:build_backend_request(query, opts)
   opts = opts or {}
+
+  local password, password_err = self:resolve_password()
+  if password_err then
+    return nil, password_err
+  end
 
   local timeout = opts.timeout
   local max_rows = opts.max_rows
@@ -133,7 +160,7 @@ function Adapter:build_backend_request(query, opts)
     host = self.config.host,
     port = self.config.port,
     user = self.config.user,
-    password = self.config.password,
+    password = password,
     database = opts.database or self.config.database,
     options = options,
     sql = query,
@@ -150,7 +177,7 @@ function Adapter:build_backend_request(query, opts)
     end
   end
 
-  return request
+  return request, nil
 end
 
 return Adapter

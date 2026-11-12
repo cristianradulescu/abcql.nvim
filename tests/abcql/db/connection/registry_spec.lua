@@ -116,7 +116,9 @@ describe("ConnectionRegistry", function()
       }
 
       secret_module = {
+        calls = 0,
         lookup = function()
+          secret_module.calls = secret_module.calls + 1
           return "keyringpass", nil
         end,
       }
@@ -153,7 +155,15 @@ describe("ConnectionRegistry", function()
       assert.are.equal("dsnpass", captured.password)
     end)
 
-    it("uses keyring password when secret is configured", function()
+    local Adapter = require("abcql.db.adapter.base")
+    local RealAdapter = {
+      new = function(config)
+        return Adapter.new(config)
+      end,
+    }
+    local ref = { service = "abcql", account = "prod-db-password" }
+
+    it("does not look the keyring secret up at registration", function()
       local captured
       local MockAdapter = {
         new = function(config)
@@ -163,33 +173,98 @@ describe("ConnectionRegistry", function()
       }
       registry:register_adapter("mysql", MockAdapter)
 
-      local ds, err = registry:register_datasource("prod", "mysql://user@localhost:3306/db", nil, {
-        service = "abcql",
-        account = "prod-db-password",
-      })
+      local ds, err = registry:register_datasource("prod", "mysql://user@localhost:3306/db", nil, ref)
       assert.is_nil(err)
       assert.is_table(ds)
-      assert.are.equal("keyringpass", captured.password)
+      assert.are.equal(0, secret_module.calls)
+      assert.is_nil(captured.password)
+      assert.are.same(ref, captured.secret)
     end)
 
-    it("returns error when keyring lookup fails", function()
+    it("looks the keyring password up when the first request is built, then reuses it", function()
+      registry:register_adapter("mysql", RealAdapter)
+      local ds = assert(registry:register_datasource("prod", "mysql://user@localhost:3306/db", nil, ref))
+      assert.are.equal(0, secret_module.calls)
+
+      local request, err = ds.adapter:build_backend_request("SELECT 1", {})
+      assert.is_nil(err)
+      assert.are.equal("keyringpass", request.password)
+      assert.are.equal(1, secret_module.calls)
+
+      request = ds.adapter:build_backend_request("SELECT 2", {})
+      assert.are.equal("keyringpass", request.password)
+      assert.are.equal(1, secret_module.calls)
+    end)
+
+    it("prefers the keyring secret over a DSN password", function()
+      registry:register_adapter("mysql", RealAdapter)
+      local ds = assert(registry:register_datasource("prod", "mysql://user:dsnpass@localhost:3306/db", nil, ref))
+      assert.are.equal("keyringpass", ds.adapter:build_backend_request("SELECT 1", {}).password)
+    end)
+
+    it("keeps the datasource when the lookup fails and reports it as the query's error", function()
+      local fail = true
       secret_module.lookup = function()
-        return nil, "secret lookup failed"
+        secret_module.calls = secret_module.calls + 1
+        if fail then
+          return nil, "secret lookup failed"
+        end
+        return "keyringpass", nil
       end
+      registry:register_adapter("mysql", RealAdapter)
 
-      local MockAdapter = {
-        new = function(config)
-          return { config = config }
-        end,
-      }
-      registry:register_adapter("mysql", MockAdapter)
+      local ds, reg_err = registry:register_datasource("prod", "mysql://user@localhost:3306/db", nil, ref)
+      assert.is_nil(reg_err)
+      assert.is_table(ds)
+      assert.are.equal(ds, registry:get_datasource("prod"))
 
-      local ds, err = registry:register_datasource("prod", "mysql://user@localhost:3306/db", nil, {
-        service = "abcql",
-        account = "prod-db-password",
-      })
-      assert.is_nil(ds)
-      assert.is_truthy(err:match("Failed to resolve keyring secret"))
+      local request, err = ds.adapter:build_backend_request("SELECT 1", {})
+      assert.is_nil(request)
+      assert.is_truthy(err:match("Failed to resolve keyring secret: secret lookup failed"))
+
+      -- not cached: the next query retries
+      fail = false
+      request = ds.adapter:build_backend_request("SELECT 1", {})
+      assert.are.equal("keyringpass", request.password)
+      assert.are.equal(2, secret_module.calls)
+    end)
+
+    it("surfaces a failed lookup through Query.execute_async without starting the backend", function()
+      secret_module.lookup = function()
+        return nil, "secret-tool lookup timed out after 20s"
+      end
+      registry:register_adapter("mysql", RealAdapter)
+      local ds = assert(registry:register_datasource("prod", "mysql://user@localhost:3306/db", nil, ref))
+
+      local Backend = require("abcql.backend")
+      local original_invoke = Backend.invoke
+      local invoked = false
+      Backend.invoke = function()
+        invoked = true
+      end
+      local got_err
+      local handle = require("abcql.db.query").execute_async(ds.adapter, "SELECT 1", function(_, err)
+        got_err = err
+      end)
+      Backend.invoke = original_invoke
+
+      assert.is_nil(handle)
+      assert.is_false(invoked)
+      assert.is_truthy(got_err:match("timed out"))
+    end)
+
+    it("looks the secret up again after a reload (a fresh registry)", function()
+      registry:register_adapter("mysql", RealAdapter)
+      local ds = assert(registry:register_datasource("prod", "mysql://user@localhost:3306/db", nil, ref))
+      ds.adapter:build_backend_request("SELECT 1", {})
+      assert.are.equal(1, secret_module.calls)
+
+      local reloaded = Registry.new()
+      reloaded:register_adapter("mysql", RealAdapter)
+      local fresh = assert(reloaded:register_datasource("prod", "mysql://user@localhost:3306/db", nil, ref))
+      assert.is_nil(fresh.adapter.config.password)
+      fresh.adapter:build_backend_request("SELECT 1", {})
+      assert.are.equal(2, secret_module.calls)
     end)
   end)
 end)

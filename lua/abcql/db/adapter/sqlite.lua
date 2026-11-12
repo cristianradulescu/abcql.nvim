@@ -25,11 +25,22 @@ end
 --- plugin qualifies tables with, so it isn't sent.
 --- @param query string The SQL query to execute
 --- @param opts table|nil Optional parameters (timeout?: number in ms, max_rows?: number)
---- @return table request
+--- @return table|nil request
+--- @return string|nil err
 function SQLiteAdapter:build_backend_request(query, opts)
-  local request = Adapter.build_backend_request(self, query, opts)
+  local request, err = Adapter.build_backend_request(self, query, opts)
+  if not request then
+    return nil, err
+  end
   request.database = self.config.path
-  return request
+  return request, nil
+end
+
+--- A database file has no password: a configured keyring secret is never looked up.
+--- @return nil
+--- @return nil
+function SQLiteAdapter:resolve_password()
+  return nil, nil
 end
 
 --- Execute a query with possible asynchronous callback

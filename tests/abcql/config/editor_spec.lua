@@ -16,6 +16,8 @@ describe("Config Editor", function()
     original_getcwd = vim.fn.getcwd
     original_secure_read = vim.secure.read
     vim.notify = function() end
+    -- minimal_init sets shadafile=NONE, so this history is the specs' own
+    vim.fn.histdel("input")
 
     dir = vim.fn.tempname()
     vim.fn.mkdir(dir, "p")
@@ -133,9 +135,10 @@ describe("Config Editor", function()
         end
       end
       vim.ui.input = function(opts, on_confirm)
-        assert.are.equal("DSN: ", opts.prompt)
-        assert.are.equal("mysql://u:p@localhost:3306/app", opts.default)
-        on_confirm("mysql://u:p@localhost:3307/app")
+        -- Pre-filled without the password, which is kept
+        assert.are.equal("DSN (its password is kept; change it under Password): ", opts.prompt)
+        assert.are.equal("mysql://u@localhost:3306/app", opts.default)
+        on_confirm("mysql://u@localhost:3307/app")
       end
 
       Editor.update("dev")
@@ -183,16 +186,182 @@ describe("Config Editor", function()
           error("unexpected prompt " .. opts.prompt)
         end
       end
-      vim.ui.input = function(_, on_confirm)
-        on_confirm("plainpw")
+      vim.ui.input = function()
+        error("passwords must not be read with vim.ui.input")
+      end
+      local prompts = {}
+      Editor.read_secret = function(prompt)
+        table.insert(prompts, prompt)
+        return "plain pw "
       end
 
       Editor.update("prod")
 
+      assert.are.same({ "Password: " }, prompts)
       local config = dofile(dir .. "/.abcql.lua")
-      assert.are.equal("mysql://u:plainpw@db:3306/app", config.datasources.prod.dsn)
+      -- encoded, and not trimmed
+      assert.are.equal("mysql://u:plain%20pw%20@db:3306/app", config.datasources.prod.dsn)
       assert.is_nil(config.datasources.prod.secret)
       assert.is_true(config.datasources.prod.readonly)
+      local ds = require("abcql.db").connectionRegistry:get_datasource("prod")
+      assert.are.equal("plain pw ", ds.adapter.config.password)
+    end)
+
+    it("keeps a typed DSN password out of the input history and the menus", function()
+      local menus = {}
+      local opened = false
+      vim.ui.select = function(items, opts, on_choice)
+        table.insert(menus, opts.prompt .. " " .. table.concat(items, " | "))
+        if opts.prompt:match("^Update 'dev'") then
+          if opened then
+            on_choice("Save")
+            return
+          end
+          opened = true
+          on_choice(items[2]) -- DSN
+        elseif opts.prompt:match("^Attach") then
+          on_choice("No")
+        else
+          error("unexpected prompt " .. opts.prompt)
+        end
+      end
+      local typed = "mysql://u:hunter2@localhost:3306/app"
+      vim.ui.input = function(_, on_confirm)
+        -- what the default vim.ui.input (vim.fn.input) does with typed text
+        vim.fn.histadd("input", typed)
+        on_confirm(typed)
+      end
+
+      Editor.update("dev")
+
+      assert.are_not.equal(typed, vim.fn.histget("input", -1))
+      for i = 1, vim.fn.histnr("input") do
+        assert.is_nil(vim.fn.histget("input", i):find("hunter2", 1, true))
+      end
+      -- the menu shown after the change masks the password
+      local last_update
+      for _, menu in ipairs(menus) do
+        if menu:match("^Update 'dev'") then
+          last_update = menu
+        end
+      end
+      assert.is_nil(last_update:find("hunter2", 1, true))
+      assert.is_not_nil(last_update:find("DSN: mysql://u:****@localhost:3306/app", 1, true))
+      assert.are.equal(typed, dofile(dir .. "/.abcql.lua").datasources.dev)
+    end)
+
+    it("reads a password with inputsecret, which keeps it out of the input history", function()
+      vim.fn.histadd("input", "before")
+      vim.api.nvim_feedkeys("hunter2\r", "t", false)
+      local password = Editor.read_secret("Password: ")
+      assert.are.equal("hunter2", password)
+      assert.are.equal("before", vim.fn.histget("input", -1))
+    end)
+
+    it("removes a DSN typed into the real vim.ui.input from the input history", function()
+      vim.ui.input = original_input
+      local opened = false
+      vim.ui.select = function(items, opts, on_choice)
+        if opts.prompt:match("^Update 'dev'") then
+          if opened then
+            on_choice("Save")
+            return
+          end
+          opened = true
+          on_choice(items[2]) -- DSN
+        elseif opts.prompt:match("^Attach") then
+          on_choice("No")
+        end
+      end
+      -- <C-u> clears the pre-filled DSN, then a DSN with an inline password is typed
+      vim.api.nvim_feedkeys("\21mysql://u:hunter2@localhost:3306/app\r", "t", false)
+      Editor.update("dev")
+
+      assert.are.equal("mysql://u:hunter2@localhost:3306/app", dofile(dir .. "/.abcql.lua").datasources.dev)
+      for i = 1, vim.fn.histnr("input") do
+        assert.is_nil(vim.fn.histget("input", i):find("hunter2", 1, true))
+      end
+    end)
+  end)
+
+  describe("add", function()
+    local function script_select(answers)
+      vim.ui.select = function(items, opts, on_choice)
+        for prompt, answer in pairs(answers) do
+          if opts.prompt:find(prompt, 1, true) then
+            for _, item in ipairs(items) do
+              if item:find(answer, 1, true) then
+                on_choice(item)
+                return
+              end
+            end
+            error("no item " .. answer .. " in " .. table.concat(items, " | "))
+          end
+        end
+        error("unexpected prompt " .. opts.prompt)
+      end
+    end
+
+    it("offers a password-less DSN and asks for the password separately", function()
+      script_select({
+        ["Password for 'staging'"] = "saved in the DSN",
+        ["Options for 'staging'"] = "None",
+        ["Attach"] = "No",
+      })
+      local inputs = {}
+      vim.ui.input = function(opts, on_confirm)
+        table.insert(inputs, opts)
+        if opts.prompt == "Datasource name: " then
+          on_confirm("staging")
+        else
+          on_confirm("mysql://u@db:3306/app")
+        end
+      end
+      Editor.read_secret = function()
+        return "p@ss/w{rd}"
+      end
+
+      Editor.add("local")
+
+      assert.are.equal("mysql://user@localhost:3306/database", inputs[2].default)
+      local config = dofile(dir .. "/.abcql.lua")
+      assert.are.equal("mysql://u:p%40ss%2Fw%7Brd%7D@db:3306/app", config.datasources.staging)
+      local ds = require("abcql.db").connectionRegistry:get_datasource("staging")
+      assert.are.equal("p@ss/w{rd}", ds.adapter.config.password)
+      assert.are.equal("rw-------", vim.fn.getfperm(dir .. "/.abcql.lua"))
+      -- the siblings are untouched
+      assert.are.equal("mysql://u:p@localhost:3306/app", config.datasources.dev)
+      assert.are.equal("mysql://u@db:3306/app", config.datasources.prod.dsn)
+    end)
+
+    it("stores an entered password in the keyring only", function()
+      local stored
+      package.loaded["abcql.secret"].is_available = function()
+        return true
+      end
+      package.loaded["abcql.secret"].store = function(ref, password)
+        stored = { ref = ref, password = password }
+        return true, nil
+      end
+      script_select({
+        ["Password for 'staging'"] = "keyring",
+        ["Options for 'staging'"] = "None",
+        ["Attach"] = "No",
+      })
+      vim.ui.input = function(opts, on_confirm)
+        on_confirm(opts.prompt == "Datasource name: " and "staging" or "mysql://u@db:3306/app")
+      end
+      Editor.read_secret = function()
+        return "s3cret"
+      end
+
+      Editor.add("local")
+
+      assert.are.same({ service = "abcql", account = "staging-db-password" }, stored.ref)
+      assert.are.equal("s3cret", stored.password)
+      local entry = dofile(dir .. "/.abcql.lua").datasources.staging
+      assert.are.equal("mysql://u@db:3306/app", entry.dsn)
+      assert.are.same({ service = "abcql", account = "staging-db-password" }, entry.secret)
     end)
 
     it("refuses names that are not defined in a config file", function()

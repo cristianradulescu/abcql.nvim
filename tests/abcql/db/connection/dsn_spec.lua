@@ -123,6 +123,44 @@ describe("dsn_handler", function()
       assert.are.equal("mysql", parsed.scheme)
     end)
 
+    it("ends the password at the last @ before the host", function()
+      local parsed = assert(dsn_handler.parse_dsn("mysql://u:p@ss@host:3306/db"))
+      assert.are.equal("u", parsed.user)
+      assert.are.equal("p@ss", parsed.password)
+      assert.are.equal("host", parsed.host)
+      assert.are.equal(3306, parsed.port)
+
+      parsed = assert(dsn_handler.parse_dsn("mysql://u:p:a{s}s@host/db?x=a@b"))
+      assert.are.equal("p:a{s}s", parsed.password)
+      assert.are.equal("host", parsed.host)
+      assert.are.equal("a@b", parsed.options.x)
+    end)
+
+    it("percent-decodes the user and password", function()
+      local parsed = assert(dsn_handler.parse_dsn("mysql://us%3Aer:p%40ss%2Fw%3Fr%23d%25@host:3306/db"))
+      assert.are.equal("us:er", parsed.user)
+      assert.are.equal("p@ss/w?r#d%", parsed.password)
+      assert.are.equal("host", parsed.host)
+      assert.are.equal("db", parsed.database)
+    end)
+
+    it("keeps a % that is not an escape", function()
+      assert.are.equal("50%off", dsn_handler.parse_dsn("mysql://u:50%off@h/db").password)
+    end)
+
+    it("never puts the password in an error message", function()
+      for _, dsn in ipairs({
+        "u:hunter2@localhost:3306/db",
+        "mysql://u:hunter2@localhost:3306",
+        "mysql:///db",
+        "sqlite://?key=hunter2",
+      }) do
+        local parsed, err = dsn_handler.parse_dsn(dsn)
+        assert.is_nil(parsed)
+        assert.is_nil(err:find("hunter2", 1, true), err)
+      end
+    end)
+
     it("should parse PostgreSQL DSN", function()
       local dsn = "postgres://pguser:pgpass@pghost:5432/pgdb"
       local parsed, err = dsn_handler.parse_dsn(dsn)
@@ -134,6 +172,56 @@ describe("dsn_handler", function()
       assert.are.equal("pghost", parsed.host)
       assert.are.equal(5432, parsed.port)
       assert.are.equal("pgdb", parsed.database)
+    end)
+  end)
+
+  describe("split_userinfo", function()
+    it("splits at the last @ of the authority and the first :", function()
+      assert.are.same(
+        { prefix = "mysql://", user = "u", password = "p@ss:x", rest = "h:3306/db?a=b@c" },
+        dsn_handler.split_userinfo("mysql://u:p@ss:x@h:3306/db?a=b@c")
+      )
+      assert.are.same({ prefix = "mysql://", user = "u", rest = "h/db" }, dsn_handler.split_userinfo("mysql://u@h/db"))
+      assert.are.same({ prefix = "mysql://", rest = "h/db" }, dsn_handler.split_userinfo("mysql://h/db"))
+    end)
+
+    it("ignores file DSNs and strings without a scheme", function()
+      assert.is_nil(dsn_handler.split_userinfo("sqlite://a@b.db"))
+      assert.is_nil(dsn_handler.split_userinfo("u:p@h/db"))
+    end)
+  end)
+
+  describe("password helpers", function()
+    it("strip_password removes the whole password, special characters included", function()
+      assert.are.equal("mysql://u@host:3306/db", dsn_handler.strip_password("mysql://u:p@ss@host:3306/db"))
+      assert.are.equal("mysql://u@host/db", dsn_handler.strip_password("mysql://u:p{a}s:s@host/db"))
+      assert.are.equal("mysql://u@host/db", dsn_handler.strip_password("mysql://u:@host/db"))
+      assert.are.equal("mysql://u@host/db", dsn_handler.strip_password("mysql://u@host/db"))
+      assert.are.equal("sqlite:///a:b@c.db", dsn_handler.strip_password("sqlite:///a:b@c.db"))
+    end)
+
+    it("set_password percent-encodes, so parse_dsn gives the password back", function()
+      for _, password in ipairs({ "p@ss", "a/b?c#d", "100%", "x:y{z}", "${HOME}", " spaced ", "ünï" }) do
+        local dsn = dsn_handler.set_password("mysql://u:old@host:3306/db?tls=true", password)
+        local parsed = assert(dsn_handler.parse_dsn(dsn))
+        assert.are.equal(password, parsed.password)
+        assert.are.equal("u", parsed.user)
+        assert.are.equal("host", parsed.host)
+        assert.are.equal("db", parsed.database)
+        assert.are.equal("true", parsed.options.tls)
+      end
+      assert.are.equal("mysql://u:p%40ss@h/db", dsn_handler.set_password("mysql://u@h/db", "p@ss"))
+      -- no user to attach a password to
+      assert.are.equal("mysql://h/db", dsn_handler.set_password("mysql://h/db", "pw"))
+    end)
+
+    it("mask hides every password character", function()
+      assert.are.equal("mysql://u:****@host:3306/db", dsn_handler.mask("mysql://u:p@ss@host:3306/db"))
+      assert.are.equal("mysql://u@host/db", dsn_handler.mask("mysql://u@host/db"))
+      assert.are.equal("socks5://u:****@proxy:1080", dsn_handler.mask("socks5://u:pw@proxy:1080"))
+      assert.are.equal("****@host/db", dsn_handler.mask("u:p@ss@host/db"))
+      assert.are.equal("sqlite:///data/app.db", dsn_handler.mask("sqlite:///data/app.db"))
+      assert.are.equal("", dsn_handler.mask(nil))
     end)
   end)
 end)

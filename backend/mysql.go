@@ -43,6 +43,13 @@ func buildDSN(req *Request, network string) string {
 	b.WriteString(req.Database)
 
 	params := []string{"parseTime=true"}
+	// Encrypt unless told otherwise: "preferred" uses TLS when the server offers
+	// it (without verifying its certificate) and falls back to plaintext when it
+	// doesn't. An explicit tls=... option, tls=false included, wins; tls=true
+	// verifies the server and is what production connections should use.
+	if _, ok := req.Options["tls"]; !ok {
+		params = append(params, "tls=preferred")
+	}
 	for k, v := range req.Options {
 		params = append(params, fmt.Sprintf("%s=%s", k, v))
 	}

@@ -243,8 +243,8 @@ vim.api.nvim_create_user_command("AbcqlDatasourceList", function()
     if ds.source_path then
       source_info = source_info .. " (" .. ds.source_path .. ")"
     end
-    -- Mask password in DSN for display
-    local display_dsn = ds.dsn:gsub("(://[^:]+:)[^@]+(@)", "%1****%2")
+    -- Mask the password (the userinfo ends at the last `@` before the host)
+    local display_dsn = require("abcql.db.connection.dsn").mask(ds.dsn)
     table.insert(lines, string.format("  %s: %s [%s]", name, display_dsn, source_info))
   end
 

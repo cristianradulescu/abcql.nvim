@@ -85,6 +85,82 @@ describe("History", function()
     end)
   end)
 
+  describe("history_rows", function()
+    local result
+    local original_db
+
+    before_each(function()
+      result = {
+        headers = { "id", "email" },
+        rows = { { "1", "a@example.com" }, { "2", "b@example.com" } },
+        row_count = 2,
+        duration_ms = 4,
+      }
+      original_db = package.loaded["abcql.db"]
+    end)
+
+    after_each(function()
+      package.loaded["abcql.db"] = original_db
+      package.loaded["abcql.config"] = nil
+    end)
+
+    local function with_datasource(flag)
+      package.loaded["abcql.db"] = {
+        connectionRegistry = {
+          get_datasource = function(_, name)
+            return name == "prod" and { name = "prod", history_rows = flag } or nil
+          end,
+        },
+      }
+    end
+
+    local function stored(id)
+      return History.get_entry(id).result
+    end
+
+    it("keeps rows by default", function()
+      local _, id = History.save("SELECT * FROM users", "dev", "app", result, nil)
+      assert.are.equal(2, #stored(id).rows)
+      assert.is_nil(stored(id).rows_omitted)
+    end)
+
+    it("keeps the query and outcome but not the rows for a datasource with history_rows = false", function()
+      with_datasource(false)
+      local _, id = History.save("SELECT * FROM users", "prod", "app", result, nil)
+      local entry = History.get_entry(id)
+      assert.are.equal("SELECT * FROM users", entry.query)
+      assert.are.same({}, entry.result.rows)
+      assert.is_true(entry.result.rows_omitted)
+      assert.are.same({ "id", "email" }, entry.result.headers)
+      assert.are.equal(2, entry.result.row_count)
+      assert.are.equal(4, entry.result.duration_ms)
+      -- nothing of the rows reached the file
+      local f = assert(io.open(require("abcql.history.storage").get_entry_path(id)))
+      assert.is_nil(f:read("*a"):find("example.com", 1, true))
+      f:close()
+      -- the live result shown on screen is untouched
+      assert.are.equal(2, #result.rows)
+    end)
+
+    it("follows query.history_rows unless the datasource overrides it", function()
+      -- a stub: the real setup() would read the user's datasource files
+      package.loaded["abcql.config"] = { query = { history_rows = false } }
+      with_datasource(nil)
+      local _, id = History.save("SELECT 1", "dev", "app", result, nil)
+      assert.is_true(stored(id).rows_omitted)
+
+      with_datasource(true)
+      _, id = History.save("SELECT 1", "prod", "app", result, nil)
+      assert.are.equal(2, #stored(id).rows)
+    end)
+
+    it("still saves errors", function()
+      with_datasource(false)
+      local _, id = History.save("SELECT * FROM nope", "prod", "app", nil, "Table 'nope' doesn't exist")
+      assert.are.equal("Table 'nope' doesn't exist", History.get_entry(id).error)
+    end)
+  end)
+
   describe("count", function()
     it("should return 0 for empty history", function()
       assert.equals(0, History.count())

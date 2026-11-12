@@ -281,10 +281,14 @@ function Follow.preview(datasource, database, sql, results, row_idx, col_idx, wi
       -- session's connection can.
       local bufnr = require("abcql.ui").get_editor_buf()
       if bufnr and require("abcql.db.session").in_transaction(bufnr, datasource) then
-        local request = datasource.adapter:build_backend_request(preview_sql, { max_rows = 1 })
-        Query.execute_batch(bufnr, datasource, request, { { sql = preview_sql, max_rows = 1 } }, function(rows, err)
-          show(rows and rows[1], err)
-        end)
+        local request, request_err = datasource.adapter:build_backend_request(preview_sql, { max_rows = 1 })
+        if not request then
+          show(nil, request_err)
+        else
+          Query.execute_batch(bufnr, datasource, request, { { sql = preview_sql, max_rows = 1 } }, function(rows, err)
+            show(rows and rows[1], err)
+          end)
+        end
       else
         Query.execute_async(datasource.adapter, preview_sql, show, { max_rows = 1 })
       end

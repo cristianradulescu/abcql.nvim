@@ -13,3 +13,7 @@ vim.cmd("runtime! plugin/plenary.vim")
 -- Specs create modified unnamed buffers; with several test processes running
 -- in parallel their swap files would collide (E303).
 vim.o.swapfile = false
+
+-- Specs type into the input history (password prompts); never read the user's
+-- ShaDa file nor write theirs back on exit.
+vim.o.shadafile = "NONE"

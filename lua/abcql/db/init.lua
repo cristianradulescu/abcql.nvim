@@ -46,6 +46,7 @@ function Database.setup(config)
           auto_limit = ds_config.auto_limit,
           lint_dangerous = ds_config.lint_dangerous,
           session = ds_config.session,
+          history_rows = ds_config.history_rows,
         }
       or nil
     local _, err = Database.connectionRegistry:register_datasource(name, dsn, proxy, secret, opts)

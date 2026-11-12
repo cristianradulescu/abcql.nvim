@@ -5,8 +5,9 @@
 ---@field auto_limit? number|false LIMIT added to plain SELECTs (overrides query.auto_limit; 0/false disables)
 ---@field lint_dangerous? boolean Per-datasource override of query.lint_dangerous
 ---@field session? "persistent"|"oneshot" Per-datasource override of query.session
+---@field history_rows? boolean Per-datasource override of query.history_rows
 
----@alias Datasource { name: string, dsn: string, adapter?: abcql.db.adapter.Adapter, readonly: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot" }
+---@alias Datasource { name: string, dsn: string, adapter?: abcql.db.adapter.Adapter, readonly: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot", history_rows?: boolean }
 
 ---@class abcql.db.connection.Registry
 ---@field private adapters table<string, abcql.db.adapter.Adapter> Registered adapter classes by scheme
@@ -31,33 +32,15 @@ function Registry:register_adapter(scheme, adapter_class)
   self.adapters[scheme:lower()] = adapter_class
 end
 
---- Resolve password from secret reference when configured
---- @param dsn string
---- @param secret table|nil
---- @return string|nil password
---- @return string|nil error
-local function resolve_password(dsn, secret)
-  if not secret then
-    local parsed, err = require("abcql.db.connection.dsn").parse_dsn(dsn)
-    if not parsed then
-      return nil, err
-    end
-    return parsed.password, nil
-  end
-
-  local keyring_password, keyring_err = require("abcql.secret").lookup(secret)
-  if keyring_err then
-    return nil, "Failed to resolve keyring secret: " .. keyring_err
-  end
-
-  return keyring_password, nil
-end
-
---- Register a data source name (DSN) with a friendly name
+--- Register a data source name (DSN) with a friendly name.
+--- A keyring `secret` is not looked up here: the adapter resolves it the first
+--- time it builds a backend request (see Adapter:resolve_password), so startup
+--- never waits on the keyring and a failed lookup is reported as that query's
+--- error instead of dropping the datasource.
 --- @param name string The friendly name for the data source
 --- @param dsn string The data source name (DSN) string
 --- @param proxy? string SOCKS proxy URL (e.g., "socks5://localhost:1080")
---- @param secret? table Secret reference for keyring lookup
+--- @param secret? table Secret reference for keyring lookup (takes precedence over a DSN password)
 --- @param opts? DatasourceOpts Safety flags (readonly / confirm / highlight / auto_limit)
 --- @return Datasource|nil The registered data source if successful, nil otherwise
 --- @return string|nil Error message if registration failed
@@ -74,9 +57,10 @@ function Registry:register_datasource(name, dsn, proxy, secret, opts)
     return nil, err
   end
 
-  local password, secret_err = resolve_password(dsn, secret)
-  if secret_err then
-    return nil, secret_err
+  -- With a secret, the password comes from the keyring on first use.
+  local password = nil
+  if not secret then
+    password = parsed.password
   end
 
   -- Find adapter for scheme
@@ -91,6 +75,7 @@ function Registry:register_datasource(name, dsn, proxy, secret, opts)
     port = parsed.port,
     user = parsed.user,
     password = password,
+    secret = secret,
     database = parsed.database,
     path = parsed.path,
     options = parsed.options,
@@ -107,6 +92,7 @@ function Registry:register_datasource(name, dsn, proxy, secret, opts)
     auto_limit = opts.auto_limit,
     lint_dangerous = opts.lint_dangerous,
     session = opts.session,
+    history_rows = opts.history_rows,
   }
 
   self.datasources = vim.tbl_extend("force", self.datasources, { [name] = datasource })

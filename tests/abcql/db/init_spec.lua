@@ -39,6 +39,32 @@ describe("Database", function()
       local schemes = Database.connectionRegistry:get_schemes()
       assert.is_true(vim.tbl_contains(schemes, "mysql"))
     end)
+
+    it("registers keyring-backed datasources without looking the secret up", function()
+      local lookups = 0
+      local original_secret = package.loaded["abcql.secret"]
+      package.loaded["abcql.secret"] = {
+        lookup = function()
+          lookups = lookups + 1
+          return nil, "keyring is locked"
+        end,
+      }
+
+      Database.setup({
+        datasources = {
+          prod = { dsn = "mysql://u@db:3306/app", secret = { service = "abcql", account = "prod" } },
+        },
+      })
+      local ds = Database.connectionRegistry:get_datasource("prod")
+      assert.is_not_nil(ds)
+      assert.are.equal(0, lookups)
+      local request, err = ds.adapter:build_backend_request("SELECT 1", {})
+      package.loaded["abcql.secret"] = original_secret
+
+      assert.is_nil(request)
+      assert.is_not_nil(err:find("keyring is locked", 1, true))
+      assert.are.equal(1, lookups)
+    end)
   end)
 
   describe("connect", function()

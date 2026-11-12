@@ -1608,6 +1608,9 @@ local function render(buf, results, opts, keep_position)
   if #rows == 0 then
     local inner_width = vim.fn.strdisplaywidth(format.format_row(header_labels, widths)) - 2
     local message = #all_rows == 0 and " No rows returned" or " No rows match the filter"
+    if results.rows_omitted then
+      message = " Rows not saved in history"
+    end
     table.insert(lines, format.border.vertical .. format.pad_right(message, inner_width) .. format.border.vertical)
     table.insert(lines, format.create_bottom_border(widths))
   else
@@ -1624,7 +1627,9 @@ local function render(buf, results, opts, keep_position)
   local footer_parts = {}
   local filtered = view ~= nil and #view.filters > 0
   local loaded = format.format_row_count(#all_rows)
-  if results.truncated then
+  if results.rows_omitted then
+    loaded = format.format_row_count(results.row_count or 0) .. " (rows not saved in history)"
+  elseif results.truncated then
     loaded = string.format("first %s (max_rows limit)", loaded)
   end
   if filtered then

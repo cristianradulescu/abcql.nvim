@@ -110,9 +110,30 @@ what the tree and completion show as the database. Password, keyring and proxy s
 apply. BLOB values are shown as hex (`0xCAFE`).
 
 You can use `:AbcqlConfigInit` to generate a template file, `:AbcqlDatasourceAdd` to add entries
-to it interactively, and `:AbcqlDatasourceUpdate` to edit them later.
+to it interactively, and `:AbcqlDatasourceUpdate` to edit them later. Config files written by
+these commands are created (or rewritten) with mode `0600`, atomically.
 
 > **Important:** Add `.abcql.lua` to your `.gitignore` to avoid committing credentials.
+
+#### Passwords with special characters
+
+The password ends at the last `@` before the host, so `mysql://user:p@ss@host:3306/db` works as
+written. Characters that end the host part or mean something else in a DSN (`/`, and to be safe
+`?`, `#`, `%`, `:`) are written percent-encoded: `mysql://user:pa%2Fss%3F@host:3306/db` is the
+password `pa/ss?`. The user name is decoded the same way. A `%` that is not followed by two hex
+digits is kept as is. `:AbcqlDatasourceAdd` / `:AbcqlDatasourceUpdate` encode a password for you.
+
+#### TLS (MySQL)
+
+Without a `tls` option, MySQL connections use `tls=preferred`: TLS when the server offers it, but
+**without verifying the server certificate**, falling back to plaintext when the server has no TLS.
+That protects against passive sniffing only. For production, verify the server with `tls=true`
+(or `tls=<name>` of a custom config); an explicit `tls=...` always wins, including `tls=false` to
+turn encryption off:
+
+```lua
+prod = { dsn = "mysql://user@db.example.com:3306/myapp?tls=true", secret = { ... } },
+```
 
 #### Default Datasource and Per-File Overrides
 
@@ -152,14 +173,16 @@ Table-style datasources accept these optional flags:
 | `auto_limit`| a number, or `false`            | Overrides `query.auto_limit` for this datasource (see [Row limits](#row-limits)) |
 | `lint_dangerous` | `true`, `false`            | Overrides the global `query.lint_dangerous` switch for this datasource |
 | `session`   | `"persistent"`, `"oneshot"`    | Overrides `query.session` for this datasource (see [Persistent sessions](#persistent-sessions)) |
+| `history_rows` | `true`, `false`             | Overrides `query.history_rows`: `false` keeps result rows out of [query history](#query-history) (the SQL and its outcome are still saved) |
 
 ```lua
 prod = {
-  dsn = "mysql://user@db-internal:3306/myapp",
+  dsn = "mysql://user@db-internal:3306/myapp?tls=true",
   secret = { service = "abcql", account = "prod-db-password" },
   readonly = true,
   confirm = "always",
   highlight = "DiagnosticError",
+  history_rows = false,
 },
 ```
 
@@ -223,21 +246,33 @@ return {
 
 `provider` is optional and defaults to `"secret-tool"`.
 
+The secret is looked up the first time the datasource is used (attaching it, which loads the
+schema for completion, or running a query), not at startup, and then kept in memory for the rest
+of the session; `:AbcqlDatasourceReload` drops it, so it is looked up again on next use. A lookup
+that fails (secret missing, keyring locked) is shown as that query's error and retried on the next
+one. `secret-tool` is given 20 seconds; a keyring that does not answer in time is reported as a
+timeout. The secret is used exactly as stored (only the newline `secret-tool` may print is
+dropped), so leading or trailing spaces are kept.
+
 > **Requirements:** install `secret-tool` (package `libsecret-tools` on Debian/Ubuntu).
 
 #### Datasource Commands
 
 - `:AbcqlDatasourceAttach [name]` - Attach a datasource to the current buffer (picker when no name)
-- `:AbcqlDatasourceAdd [local|user]` - Add a datasource interactively (name, DSN, optional
-  readonly / always-confirm / SOCKS proxy); it is appended to `.abcql.lua` or the user config
-  (created from the template if missing), datasources are reloaded, and you can attach it to the
-  current SQL buffer right away. When `secret-tool` is installed it also offers to keep the
-  password in the keyring instead of the file: the password is stored under
-  `service abcql / account <name>-db-password`, stripped from the DSN, and referenced with a
-  `secret = { ... }` block
+- `:AbcqlDatasourceAdd [local|user]` - Add a datasource interactively (name, DSN without the
+  password, the password, optional readonly / always-confirm / SOCKS proxy); it is appended to
+  `.abcql.lua` or the user config (created from the template if missing), datasources are
+  reloaded, and you can attach it to the current SQL buffer right away. The password is read
+  separately with `inputsecret()`: not echoed and not recorded in the input history (which ShaDa
+  saves to disk). It goes to the keyring when `secret-tool` is installed and you choose so (stored
+  under `service abcql / account <name>-db-password` and referenced with a `secret = { ... }`
+  block), or percent-encoded into the DSN in the file. A DSN typed with an inline password is
+  removed from the input history, and can still be moved to the keyring
 - `:AbcqlDatasourceUpdate [name]` - Edit a datasource that lives in a config file: a menu lets
-  you change the DSN, the password (in the DSN, or moved to / taken back from the keyring),
-  readonly, the confirm policy and the proxy, then `Save` rewrites just that entry in place
+  you change the DSN (pre-filled without its password, which is kept), the password (in the DSN,
+  removed, or moved to / taken back from the keyring), readonly, the confirm policy and the
+  proxy, then `Save` rewrites just that entry in place. Menus show DSNs and proxies with the
+  password masked
 - `:AbcqlConfigInit` - Create a template `.abcql.lua` in the current directory
 - `:AbcqlConfigInit user` - Create a template in the user config directory
 - `:AbcqlDatasourceList` - Show all configured datasources with their source
@@ -268,6 +303,7 @@ require("abcql").setup({
     treesitter = true,      -- use the tree-sitter sql parser for statement boundaries if installed
     lint_dangerous = true,  -- warn about and always confirm UPDATE/DELETE without WHERE and TRUNCATE
     session = "oneshot",    -- "persistent": one connection per SQL buffer kept across runs (MySQL only)
+    history_rows = true,    -- false: query history keeps the SQL and outcome, not the result rows
   },
 })
 ```
@@ -507,7 +543,11 @@ Set `ui = { icons = false }` if you do not use a Nerd Font.
 ### Query History
 
 Every execution (success, error or cancellation) is stored under `stdpath("data")/abcql/query_history`
-(last 100 entries, up to 1000 rows each). `:AbcqlHistoryPick` opens a picker over recent entries; for the
+(last 100 entries, up to 1000 rows each), as plaintext JSON in a `0700` directory with `0600` files.
+Result rows can hold production data: set `history_rows = false` on a datasource (or
+`query.history_rows = false` for all of them) to save only the SQL and its outcome (row count,
+duration, error) without the rows; such an entry shows "Rows not saved in history" when replayed.
+`:AbcqlHistoryPick` opens a picker over recent entries; for the
 chosen one you can re-run it on its original datasource, insert it below the cursor, or show the
 stored result. `:AbcqlHistoryBack` / `:AbcqlHistoryForward` (or `<C-o>` / `<C-i>` in the results
 panel) step through entries in place, with the query shown above the result. `:AbcqlHistoryClear`

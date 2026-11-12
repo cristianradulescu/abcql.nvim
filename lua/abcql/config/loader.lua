@@ -18,6 +18,7 @@ local M = {}
 --- @field auto_limit? number|false LIMIT added to plain SELECTs (overrides query.auto_limit; 0/false disables)
 --- @field lint_dangerous? boolean Override query.lint_dangerous for this datasource
 --- @field session? "persistent"|"oneshot" Override query.session for this datasource
+--- @field history_rows? boolean Override query.history_rows (false: history keeps the query and outcome, not the rows)
 --- @field source abcql.DatasourceSource Where this datasource was loaded from
 --- @field source_path? string Path to the config file (nil for "config" source)
 
@@ -72,7 +73,14 @@ M.CONFIG_TEMPLATE = [[
 --     auto_limit = 100,            -- LIMIT added to SELECTs without one (false = off)
 --     lint_dangerous = false,      -- skip the UPDATE/DELETE-without-WHERE lint
 --     session = "persistent",      -- keep one connection per buffer (MySQL only); "oneshot" = one per run
+--     history_rows = false,        -- query history keeps the SQL and outcome, not the result rows
 --   },
+--
+-- Passwords with reserved characters (@ : / ? # % and so on) can be
+-- percent-encoded in the DSN: "mysql://user:p%40ss@host:3306/db" is p@ss.
+--
+-- MySQL connections use TLS when the server offers it (tls=preferred, without
+-- certificate verification). For production, verify the server: add ?tls=true.
 
 return {
   -- Datasource attached automatically to SQL buffers in this project
@@ -179,6 +187,7 @@ local function normalize_datasource(value, source, source_path)
     entry.auto_limit = value.auto_limit
     entry.lint_dangerous = value.lint_dangerous
     entry.session = value.session
+    entry.history_rows = value.history_rows
   else
     entry.dsn = M.expand_env_vars(value)
   end
@@ -252,7 +261,7 @@ end
 
 --- Get datasource configs with DSN, optional proxy/secret and safety flags
 --- @param loaded_datasources table<string, abcql.LoadedDatasource>
---- @return table<string, { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot" }> name -> config mapping
+--- @return table<string, { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot", history_rows?: boolean }> name -> config mapping
 function M.get_datasource_configs(loaded_datasources)
   local result = {}
   for name, data in pairs(loaded_datasources) do
@@ -266,6 +275,7 @@ function M.get_datasource_configs(loaded_datasources)
       auto_limit = data.auto_limit,
       lint_dangerous = data.lint_dangerous,
       session = data.session,
+      history_rows = data.history_rows,
     }
   end
   return result
@@ -291,60 +301,155 @@ function M.create_config_file(path)
     end
   end
 
-  -- Write the template
-  local file, err = io.open(path, "w")
-  if not file then
+  -- Write the template (0600: the file is meant to hold credentials)
+  local ok, err = require("abcql.fs").write_private(path, M.CONFIG_TEMPLATE)
+  if not ok then
     return false, string.format("Failed to create config file: %s", err)
   end
-
-  file:write(M.CONFIG_TEMPLATE)
-  file:close()
 
   return true, nil
 end
 
---- Remove the password component from a DSN (`scheme://user:pass@host` -> `scheme://user@host`)
+--- Remove the password component from a DSN (`scheme://user:pass@host` -> `scheme://user@host`).
+--- The userinfo ends at the last `@` before the host (see abcql.db.connection.dsn.split_userinfo).
 --- @param dsn string
 --- @return string
 function M.strip_dsn_password(dsn)
-  return (dsn:gsub("^(%w+://[^:/@]+):[^@]*@", "%1@"))
+  return require("abcql.db.connection.dsn").strip_password(dsn)
 end
 
---- Set (or replace) the password component of a DSN
+--- Set (or replace) the password component of a DSN; the password is percent-encoded
+--- so reserved characters (`@ : / ? # %`) survive parsing.
 --- @param dsn string
 --- @param password string
 --- @return string
 function M.set_dsn_password(dsn, password)
-  local stripped = M.strip_dsn_password(dsn)
-  local replaced, count = stripped:gsub("^(%w+://[^:/@]+)@", "%1:" .. password:gsub("%%", "%%%%") .. "@")
-  if count == 0 then
-    return dsn
+  return require("abcql.db.connection.dsn").set_password(dsn, password)
+end
+
+--- End of a short string (`"..."` / `'...'`) starting at `from` (just after the opening quote).
+--- @param line string
+--- @param from number
+--- @param quote string
+--- @return number|nil close Index of the closing quote; nil when the line ends first
+--- @return boolean continues The line ends in a backslash, so the string goes on
+local function short_string_end(line, from, quote)
+  local j = from
+  while j <= #line do
+    local c = line:sub(j, j)
+    if c == "\\" then
+      if j == #line then
+        return nil, true
+      end
+      j = j + 2
+    elseif c == quote then
+      return j, false
+    else
+      j = j + 1
+    end
   end
-  return replaced
+  return nil, false
+end
+
+--- Count the braces of one line of Lua source that are code, skipping string
+--- literals (short and long-bracket) and comments (line and long-bracket).
+--- @param line string
+--- @param open string|nil What is still open from the previous line: the closing
+---   long bracket (`]]`, `]==]`) of a long string/comment, or the quote of a
+---   backslash-continued short string
+--- @return number delta Number of `{` minus number of `}`
+--- @return string|nil open What is still open at the end of this line
+local function lex_line(line, open)
+  local delta = 0
+  local i = 1
+  if open == '"' or open == "'" then
+    local close, continues = short_string_end(line, 1, open)
+    if not close then
+      return 0, continues and open or nil
+    end
+    i = close + 1
+  elseif open then
+    local _, close_end = line:find(open, 1, true)
+    if not close_end then
+      return 0, open
+    end
+    i = close_end + 1
+  end
+
+  while i <= #line do
+    local c = line:sub(i, i)
+    if c == "-" and line:sub(i + 1, i + 1) == "-" then
+      local eq = line:match("^%[(=*)%[", i + 2)
+      if not eq then
+        break -- line comment: the rest of the line is not code
+      end
+      local close = "]" .. eq .. "]"
+      local _, close_end = line:find(close, i + 4 + #eq, true)
+      if not close_end then
+        return delta, close
+      end
+      i = close_end + 1
+    elseif c == '"' or c == "'" then
+      local close, continues = short_string_end(line, i + 1, c)
+      if not close then
+        return delta, continues and c or nil
+      end
+      i = close + 1
+    elseif c == "[" and line:match("^%[=*%[", i) then
+      local eq = line:match("^%[(=*)%[", i)
+      local close = "]" .. eq .. "]"
+      local _, close_end = line:find(close, i + 2 + #eq, true)
+      if not close_end then
+        return delta, close
+      end
+      i = close_end + 1
+    else
+      if c == "{" then
+        delta = delta + 1
+      elseif c == "}" then
+        delta = delta - 1
+      end
+      i = i + 1
+    end
+  end
+  return delta, nil
+end
+
+--- Whether a config line starts the entry `name = ...` (or `["name"] = ...`)
+--- @param line string
+--- @param name string
+--- @return boolean
+local function is_entry_line(line, name)
+  return line:match("^%s*" .. vim.pesc(name) .. "%s*=") ~= nil
+    or line:match('^%s*%["' .. vim.pesc(name) .. '"%]%s*=') ~= nil
 end
 
 --- Find the line range of a datasource entry in config file lines.
---- Handles one-line string entries and multi-line table entries (brace-matched).
+--- Handles one-line string entries and multi-line table entries. Braces are
+--- matched as Lua code: those inside strings (a password with `{`) and comments
+--- don't count, and a line that starts inside a long string or comment is never
+--- taken for an entry.
 --- @param lines string[]
 --- @param name string
 --- @return number|nil start_line 1-indexed
 --- @return number|nil end_line 1-indexed (inclusive)
 function M.find_datasource_entry(lines, name)
-  local key_pattern = "^%s*" .. vim.pesc(name) .. "%s*="
-  local quoted_key_pattern = '^%s*%["' .. vim.pesc(name) .. '"%]%s*='
+  local open = nil
   for i, line in ipairs(lines) do
-    if line:match(key_pattern) or line:match(quoted_key_pattern) then
+    if open == nil and is_entry_line(line, name) then
       local depth = 0
       for j = i, #lines do
-        local _, opens = lines[j]:gsub("{", "")
-        local _, closes = lines[j]:gsub("}", "")
-        depth = depth + opens - closes
-        if depth <= 0 then
+        local delta
+        delta, open = lex_line(lines[j], open)
+        depth = depth + delta
+        if depth <= 0 and open == nil then
           return i, j
         end
       end
       return i, #lines
     end
+    local _
+    _, open = lex_line(line, open)
   end
   return nil, nil
 end
@@ -352,7 +457,7 @@ end
 --- Replace a datasource entry in a config file with a freshly rendered one.
 --- @param path string
 --- @param name string
---- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot" }
+--- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot", history_rows?: boolean }
 --- @return boolean success
 --- @return string|nil error
 function M.update_datasource_in_file(path, name, entry)
@@ -386,12 +491,11 @@ function M.update_datasource_in_file(path, name, entry)
     table.insert(result, lines[i])
   end
 
-  local out, write_err = io.open(path, "w")
-  if not out then
+  -- Atomic (temp file + rename) and 0600, so a failed write can't lose the file
+  local ok, write_err = require("abcql.fs").write_private(path, table.concat(result, "\n"))
+  if not ok then
     return false, "Failed to write config file: " .. tostring(write_err)
   end
-  out:write(table.concat(result, "\n"))
-  out:close()
 
   if M.TRUST_WRITTEN_FILES and vim.secure and vim.secure.trust then
     pcall(vim.secure.trust, { action = "allow", path = path })
@@ -402,7 +506,7 @@ end
 
 --- Render a datasource entry as Lua source for a config file
 --- @param name string
---- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot" }
+--- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot", history_rows?: boolean }
 --- @return string
 function M.format_datasource_entry(name, entry)
   local key = name:match("^[%a_][%w_]*$") and name or string.format("[%q]", name)
@@ -413,6 +517,7 @@ function M.format_datasource_entry(name, entry)
   local highlight = type(entry.highlight) == "string" and entry.highlight or nil
   local lint_dangerous = type(entry.lint_dangerous) == "boolean"
   local session = (entry.session == "persistent" or entry.session == "oneshot") and entry.session or nil
+  local history_rows = type(entry.history_rows) == "boolean"
   local auto_limit = entry.auto_limit
   if type(auto_limit) ~= "number" and auto_limit ~= false then
     auto_limit = nil
@@ -424,6 +529,7 @@ function M.format_datasource_entry(name, entry)
     or highlight
     or lint_dangerous
     or session
+    or history_rows
     or auto_limit ~= nil
   if not has_flags then
     return string.format("    %s = %q,", key, entry.dsn)
@@ -454,6 +560,9 @@ function M.format_datasource_entry(name, entry)
   if session then
     table.insert(lines, string.format("      session = %q,", session))
   end
+  if history_rows then
+    table.insert(lines, string.format("      history_rows = %s,", tostring(entry.history_rows)))
+  end
   if auto_limit ~= nil then
     table.insert(lines, string.format("      auto_limit = %s,", tostring(auto_limit)))
   end
@@ -466,7 +575,7 @@ end
 --- `datasources = {` line so comments and other entries are preserved.
 --- @param path string Config file path
 --- @param name string Datasource name
---- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot" }
+--- @param entry { dsn: string, proxy?: string, secret?: abcql.SecretRef, readonly?: boolean, confirm?: string, highlight?: string, auto_limit?: number|false, lint_dangerous?: boolean, session?: "persistent"|"oneshot", history_rows?: boolean }
 --- @return boolean success
 --- @return string|nil error
 function M.add_datasource_to_file(path, name, entry)
@@ -493,16 +602,18 @@ function M.add_datasource_to_file(path, name, entry)
   file:close()
 
   local lines = vim.split(content, "\n", { plain = true })
-  local key_pattern = "^%s*" .. vim.pesc(name) .. "%s*="
-  local quoted_key_pattern = '^%s*%["' .. vim.pesc(name) .. '"%]%s*='
+  if M.find_datasource_entry(lines, name) then
+    return false, string.format("Datasource '%s' already exists in %s", name, path)
+  end
   local insert_at = nil
+  local open = nil
   for i, line in ipairs(lines) do
-    if line:match(key_pattern) or line:match(quoted_key_pattern) then
-      return false, string.format("Datasource '%s' already exists in %s", name, path)
-    end
-    if not insert_at and line:match("^%s*datasources%s*=%s*{%s*$") then
+    if open == nil and line:match("^%s*datasources%s*=%s*{%s*$") then
       insert_at = i
+      break
     end
+    local _
+    _, open = lex_line(line, open)
   end
   if not insert_at then
     return false, "Could not find a `datasources = {` line in " .. path
@@ -510,12 +621,11 @@ function M.add_datasource_to_file(path, name, entry)
 
   table.insert(lines, insert_at + 1, M.format_datasource_entry(name, entry))
 
-  local out, write_err = io.open(path, "w")
-  if not out then
+  -- Atomic (temp file + rename) and 0600, so a failed write can't lose the file
+  local ok, write_err = require("abcql.fs").write_private(path, table.concat(lines, "\n"))
+  if not ok then
     return false, "Failed to write config file: " .. tostring(write_err)
   end
-  out:write(table.concat(lines, "\n"))
-  out:close()
 
   -- The file was written by the user through this command, so re-trust it
   -- for vim.secure.read instead of prompting on the next reload.

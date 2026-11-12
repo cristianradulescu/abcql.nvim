@@ -36,6 +36,41 @@ local function get_index()
   return state.index
 end
 
+--- Whether history entries of a datasource keep the result rows: the datasource's
+--- `history_rows` flag overrides `query.history_rows` (default true).
+---@param datasource_name string|nil
+---@return boolean
+function History.rows_enabled(datasource_name)
+  -- Only a datasource that is registered can carry the flag, so abcql.db isn't loaded just for this.
+  local Database = package.loaded["abcql.db"]
+  local registry = type(Database) == "table" and Database.connectionRegistry or nil
+  local datasource = registry and datasource_name and registry:get_datasource(datasource_name)
+  if datasource and datasource.history_rows ~= nil then
+    return datasource.history_rows ~= false
+  end
+  local ok, config = pcall(require, "abcql.config")
+  return not (ok and type(config.query) == "table" and config.query.history_rows == false)
+end
+
+--- The result as it is written to history: without its rows when the datasource
+--- keeps them out (the query, headers, counts, duration and errors are kept). The
+--- live result is not modified.
+---@param result table|nil
+---@param datasource_name string|nil
+---@return table|nil
+local function stored_result(result, datasource_name)
+  if type(result) ~= "table" or result.rows == nil or History.rows_enabled(datasource_name) then
+    return result
+  end
+  local copy = {}
+  for key, value in pairs(result) do
+    copy[key] = value
+  end
+  copy.rows = {}
+  copy.rows_omitted = true
+  return copy
+end
+
 --- Save a query execution to history
 ---@param query string The SQL query that was executed
 ---@param datasource_name string Name of the datasource
@@ -45,6 +80,7 @@ end
 ---@return boolean success True if saved successfully
 ---@return string|nil id Id of the saved entry
 function History.save(query, datasource_name, database, result, error)
+  result = stored_result(result, datasource_name)
   local entry = {
     id = Storage.generate_id(),
     timestamp = os.time(),

@@ -16,6 +16,7 @@ local loader = require("abcql.config.loader")
 ---@field treesitter boolean Use the tree-sitter `sql` parser for statement boundaries when available
 ---@field lint_dangerous boolean Warn about and always confirm UPDATE/DELETE without WHERE and TRUNCATE
 ---@field session "oneshot"|"persistent" "persistent" keeps one connection per SQL buffer open across runs (MySQL only); "oneshot" connects per run
+---@field history_rows boolean Save result rows in query history (false: only the query and its outcome; a datasource's `history_rows` overrides it)
 
 ---@class abcql.Config
 ---@field datasources table<string, string|table>
@@ -57,6 +58,7 @@ local defaults = {
     treesitter = true,
     lint_dangerous = true,
     session = "oneshot",
+    history_rows = true,
   },
 }
 
